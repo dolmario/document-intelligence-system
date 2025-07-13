@@ -1,4 +1,60 @@
- 📁 Document Intelligence System (WIP 🚧)
+Vollständige & saubere README.md (zum Kopieren) 
+markdown
+ 
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+⌄
+⌄
+⌄
+⌄
+⌄
+⌄
+⌄
+⌄
+# 📁 Document Intelligence System (WIP 🚧)
 
 Ein modulares, DSGVO-konformes Dokumenten- und Wissensmanagement-System mit intelligenter Volltextsuche, semantischer Verknüpfung, automatischer Indexierung und OCR-Unterstützung.
 
@@ -46,15 +102,36 @@ cd document-intelligence-system
  
 Linux/macOS 
 bash
+ 
+ 
+1
+2
+3
+4
 git clone https://github.com/ [USERNAME]/document-intelligence-system.git
 cd document-intelligence-system
 chmod +x install.sh
 ./install.sh
-
+ 
  
 Manuelle Installation 
 bash
-
+ 
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
 # 1. Repository klonen
 git clone https://github.com/ [USERNAME]/document-intelligence-system.git
 cd document-intelligence-system
@@ -85,12 +162,28 @@ Dokumente hinzufügen
     Der Watchdog erkennt neue Dateien automatisch
     OCR und Indexierung erfolgen automatisch
     Dokumente sind sofort durchsuchbar
-
      
 
 API Beispiele (Python) 
 python
- import requests
+ 
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+⌄
+import requests
 
 # Suche
 response = requests.post('http://localhost:8001/search', json={
@@ -108,7 +201,25 @@ similar = requests.get(f'http://localhost:8001/suggest/{doc_id}')
  
 🧪 Testing 
 bash
- # Virtuelle Umgebung aktivieren
+ 
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+# Virtuelle Umgebung aktivieren
 source venv/bin/activate  # Linux/macOS
 # oder
 .\venv\Scripts\Activate.ps1  # Windows
@@ -128,7 +239,23 @@ pytest tests/test_ocr.py -v
  
 🏗️ Architektur 
  
-
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
 ┌─────────────────────────────────────────────────────────┐
 │                    Open WebUI (UI)                      │
 └────────────────────────┬────────────────────────────────┘
@@ -150,6 +277,25 @@ pytest tests/test_ocr.py -v
 ⚙️ Konfiguration 
 env
  
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
 # OCR
 TESSERACT_LANG=deu+eng
 OCR_ENGINE=tesseract
@@ -181,6 +327,14 @@ CACHE_TTL=3600
 Manuelle Verknüpfungen 
 bash
  
+ 
+1
+2
+3
+4
+5
+6
+7
 curl -X POST http://localhost:8001/link \
   -H "Content-Type: application/json" \
   -d '{
@@ -200,7 +354,19 @@ N8N Workflows
 
 Ollama Modelle 
 bash
-
+ 
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
 # Liste verfügbare Modelle
 docker exec -it document-intelligence-system-ollama-1 ollama list
 
@@ -217,7 +383,17 @@ curl http://localhost:11434/api/generate -d '{
 📊 Monitoring 
 Logs anzeigen 
 bash
- # Alle Services
+ 
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+# Alle Services
 docker compose logs -f
 
 # Spezifischer Service
@@ -229,6 +405,18 @@ docker compose logs --tail=100
  
 System-Status 
 bash
+ 
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
 # Service Status
 docker compose ps
 
@@ -265,6 +453,19 @@ docker compose down -v && docker compose up -d
 Development Setup 
 bash
  
+ 
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
 # Development dependencies
 pip install -r requirements-dev.txt
 
@@ -296,4 +497,5 @@ Dieses Projekt ist unter der MIT-Lizenz lizenziert – siehe LICENSE  für Detai
     Issues: [GitHub Issues](https://github.com/  [USERNAME]/document-intelligence-system/issues)
     Discussions: [GitHub Discussions](https://github.com/  [USERNAME]/document-intelligence-system/discussions)
     Wiki: [Project Wiki](https://github.com/  [USERNAME]/document-intelligence-system/wiki)
+     
      
