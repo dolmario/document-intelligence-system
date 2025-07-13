@@ -1,14 +1,17 @@
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional  # ADDED Optional
 import json
 from fuzzywuzzy import fuzz
 from sentence_transformers import SentenceTransformer
 import numpy as np
-from pathlib import Path
-import asyncio
-import logging
+from pathlib import Path  # ADDED
+import asyncio  # ADDED
+import logging  # ADDED
+
+from core.models import DocumentIndex  # ADDED
+from core.utils import setup_logger  # ADDED
 
 # Logger konfigurieren
-logger = logging.getLogger(__name__)
+logger = setup_logger('search_engine')
 
 class DocumentIndex:
     """Dummy-Klasse zur Repräsentation eines dokumentierten Indexes"""
