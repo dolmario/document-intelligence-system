@@ -1,42 +1,16 @@
-from typing import List, Dict, Tuple, Optional  # ADDED Optional
+from typing import List, Dict, Tuple, Optional
 import json
 from fuzzywuzzy import fuzz
 from sentence_transformers import SentenceTransformer
 import numpy as np
-from pathlib import Path  # ADDED
-import asyncio  # ADDED
-import logging  # ADDED
+from pathlib import Path
+import asyncio
+import logging
 
-from core.models import DocumentIndex  # ADDED
-from core.utils import setup_logger  # ADDED
+from core.models import DocumentIndex
+from core.utils import setup_logger
 
-# Logger konfigurieren
 logger = setup_logger('search_engine')
-
-class DocumentIndex:
-    """Dummy-Klasse zur Repräsentation eines dokumentierten Indexes"""
-    def __init__(self, doc_id: str, title: str, keywords: List[str], sections: List[Dict], references: List[str]):
-        self.doc_id = doc_id
-        self.title = title
-        self.keywords = keywords
-        self.sections = sections
-        self.references = references
-        self.semantic_links: Dict[str, float] = {}
-    
-    @classmethod
-    def from_json(cls, json_str: str):
-        data = json.loads(json_str)
-        return cls(
-            doc_id=data['doc_id'],
-            title=data['title'],
-            keywords=data.get('keywords', []),
-            sections=data.get('sections', []),
-            references=data.get('references', [])
-        )
-    
-    def save(self, base_path: Path):
-        """Dummy-Speichermethode"""
-        pass
 
 class IntelligentSearchEngine:
     def __init__(self, index_path: str):
@@ -46,8 +20,8 @@ class IntelligentSearchEngine:
         self.load_indices()
         
     def load_indices(self):
-        """Lade alle Markdown/JSON Indizes (synchron)"""
-        # Implementierung zum Laden der Indizes
+        """Lade alle Markdown/JSON Indizes"""
+        # Placeholder - wird in load_indices_async implementiert
         pass
     
     async def load_indices_async(self):
@@ -70,7 +44,7 @@ class IntelligentSearchEngine:
         logger.info(f"{len(self.indices)} Indizes geladen")
 
     def search(self, query: str, filters: Dict = None) -> List[Tuple[DocumentIndex, float]]:
-        """Mehrstufige intelligente Suche (synchron)"""
+        """Mehrstufige intelligente Suche"""
         # 1. Keyword-basierte Vorfilterung
         keyword_matches = self.keyword_search(query)
         
@@ -88,7 +62,8 @@ class IntelligentSearchEngine:
     async def search_async(self, query: str, filters: Dict = None, limit: int = 20):
         """Asynchrone Suche"""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self.search, query, filters)
+        results = await loop.run_in_executor(None, self.search, query, filters)
+        return results[:limit]
 
     async def get_document_async(self, doc_id: str) -> Optional[DocumentIndex]:
         """Hole Dokument asynchron"""
@@ -121,7 +96,7 @@ class IntelligentSearchEngine:
                         score += 2
             
             # Content-Match
-            content_text = ' '.join([s['content'] for s in index.sections])
+            content_text = ' '.join([s.get('content', '') for s in index.sections])
             for term in query_terms:
                 if term in content_text.lower():
                     score += 1
@@ -131,19 +106,25 @@ class IntelligentSearchEngine:
         
         # Sortiere nach Score
         matches.sort(key=lambda x: x[1], reverse=True)
-        return [m[0] for m in matches[:50]]  # Top 50 für semantische Suche
+        return [m[0] for m in matches[:50]]
 
     def semantic_search(self, query: str, candidate_ids: List[str]) -> List[Tuple[str, float]]:
         """Semantische Ähnlichkeitssuche"""
+        if not candidate_ids:
+            return []
+            
         query_embedding = self.encoder.encode(query)
         results = []
         
         for doc_id in candidate_ids:
+            if doc_id not in self.indices:
+                continue
+                
             index = self.indices[doc_id]
             
             # Erstelle Dokument-Repräsentation
             doc_text = f"{index.title} {' '.join(index.keywords)} "
-            doc_text += ' '.join([s['content'][:200] for s in index.sections[:3]])
+            doc_text += ' '.join([s.get('content', '')[:200] for s in index.sections[:3]])
             
             doc_embedding = self.encoder.encode(doc_text)
             
@@ -152,7 +133,7 @@ class IntelligentSearchEngine:
                 np.linalg.norm(query_embedding) * np.linalg.norm(doc_embedding)
             )
             
-            results.append((doc_id, similarity))
+            results.append((doc_id, float(similarity)))
         
         results.sort(key=lambda x: x[1], reverse=True)
         return results
@@ -162,12 +143,15 @@ class IntelligentSearchEngine:
         expanded = dict(results)
         
         for doc_id, score in results[:10]:  # Nur Top 10 expandieren
+            if doc_id not in self.indices:
+                continue
+                
             index = self.indices[doc_id]
             
             # Füge direkte Referenzen hinzu
             for ref_id in index.references:
                 if ref_id in self.indices and ref_id not in expanded:
-                    expanded[ref_id] = score * 0.5  # 50% des Original-Scores
+                    expanded[ref_id] = score * 0.5
             
             # Füge semantische Links hinzu
             for link_id, link_score in index.semantic_links.items():
@@ -179,8 +163,13 @@ class IntelligentSearchEngine:
         
         return sorted(expanded.items(), key=lambda x: x[1], reverse=True)
 
-    def apply_learning_boost(self, results: List[Tuple[str, float]], query: str) -> List[Tuple[str, float]]:
-        """Wende Learning-basiertes Ranking an (Placeholder)"""
-        # Hier würde normalerweise der Learning Agent eingreifen
-        # Aktuell: Einfache Rückgabe der unveränderten Ergebnisse
-        return results
+    def apply_learning_boost(self, results: List[Tuple[str, float]], query: str) -> List[Tuple[DocumentIndex, float]]:
+        """Wende Learning-basiertes Ranking an"""
+        # Konvertiere zu DocumentIndex Objekten
+        final_results = []
+        for doc_id, score in results:
+            if doc_id in self.indices:
+                final_results.append((self.indices[doc_id], score))
+        
+        return final_results
+
