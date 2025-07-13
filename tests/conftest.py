@@ -2,6 +2,17 @@ import pytest
 import asyncio
 from pathlib import Path
 import shutil
+import sys
+from unittest.mock import MagicMock
+
+# Mock für sentence_transformers und huggingface_hub, bevor andere Importe erfolgen
+sys.modules["sentence_transformers"] = MagicMock()
+sys.modules["sentence_transformers"].SentenceTransformer = MagicMock()
+sys.modules["sentence_transformers"].SentenceTransformer.return_value.encode.return_value = [0.1] * 384
+
+sys.modules["huggingface_hub"] = MagicMock()
+sys.modules["huggingface_hub"].cached_download = MagicMock()
+sys.modules["huggingface_hub"].hf_hub_url = MagicMock()
 
 @pytest.fixture(scope="session")
 def event_loop():
