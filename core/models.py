@@ -1,4 +1,3 @@
-python# core/models.py
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Any
 from datetime import datetime
