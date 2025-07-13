@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Daten
+data/*
+!data/.gitkeep
+indices/*
+!indices/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Sensitive
+*.pem
+*.key
+config/secrets/
