@@ -1,0 +1,7 @@
+txt# agents/ocr/requirements.txt
+redis==5.0.1
+pytesseract==0.3.10
+Pillow==10.1.0
+pdf2image==1.16.3
+python-dotenv==1.0.0
+aiofiles==23.2.1
