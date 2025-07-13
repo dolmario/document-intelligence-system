@@ -1,0 +1,32 @@
+yaml# docker-compose.yml Erweiterung
+services:
+  index_generator:
+    build: ./services/indexer
+    volumes:
+      - ./data:/data
+      - ./indices:/indices
+    environment:
+      - INDEX_FORMAT=markdown_json
+      - PII_REMOVAL=strict
+      - LANGUAGE=de
+    command: python index_generator.py --watch
+
+  search_api:
+    build: ./services/search
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./indices:/indices
+    environment:
+      - CACHE_TTL=3600
+      - MIN_RELEVANCE_SCORE=0.3
+
+  learning_service:
+    build: ./services/learning
+    volumes:
+      - ./indices:/indices
+      - ./learning_data:/learning_data
+    environment:
+      - LEARNING_THRESHOLD=0.3
+      - UPDATE_INTERVAL=300
+ 
