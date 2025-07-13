@@ -1,59 +1,4 @@
-Vollständige & saubere README.md (zum Kopieren) 
-markdown
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-15
-16
-17
-18
-19
-20
-21
-22
-23
-24
-25
-26
-27
-28
-29
-30
-31
-32
-33
-34
-35
-36
-37
-38
-39
-40
-41
-42
-43
-44
-⌄
-⌄
-⌄
-⌄
-⌄
-⌄
-⌄
-⌄
+```markdown
 # 📁 Document Intelligence System (WIP 🚧)
 
 Ein modulares, DSGVO-konformes Dokumenten- und Wissensmanagement-System mit intelligenter Volltextsuche, semantischer Verknüpfung, automatischer Indexierung und OCR-Unterstützung.
@@ -62,9 +7,9 @@ Ein modulares, DSGVO-konformes Dokumenten- und Wissensmanagement-System mit inte
 
 ---
 
-[![Tests](https://github.com/ [USERNAME]/document-intelligence-system/actions/workflows/test.yml/badge.svg)](https://github.com/ [USERNAME]/document-intelligence-system/actions/workflows/test.yml)
-[![Docker](https://img.shields.io/docker/pulls/ [USERNAME]/doc-intelligence)](https://hub.docker.com/r/ [USERNAME]/doc-intelligence)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg )](LICENSE)
+[![Tests](https://github.com/[USERNAME]/document-intelligence-system/actions/workflows/test.yml/badge.svg)](https://github.com/[USERNAME]/document-intelligence-system/actions/workflows/test.yml)
+[![Docker](https://img.shields.io/docker/pulls/[USERNAME]/doc-intelligence)](https://hub.docker.com/r/[USERNAME]/doc-intelligence)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Ein modulares, DSGVO-konformes Dokumenten- und Wissensmanagement-System mit intelligenter Volltextsuche, semantischer Verknüpfung und KI-Unterstützung.
 
@@ -95,45 +40,25 @@ Ein modulares, DSGVO-konformes Dokumenten- und Wissensmanagement-System mit inte
 ### Windows (PowerShell als Administrator)
 
 ```powershell
-git clone https://github.com/ [USERNAME]/document-intelligence-system.git
+git clone https://github.com/[USERNAME]/document-intelligence-system.git
 cd document-intelligence-system
 .\install.ps1
- 
- 
-Linux/macOS 
-bash
- 
- 
-1
-2
-3
-4
-git clone https://github.com/ [USERNAME]/document-intelligence-system.git
+```
+
+### Linux/macOS
+
+```bash
+git clone https://github.com/[USERNAME]/document-intelligence-system.git
 cd document-intelligence-system
 chmod +x install.sh
 ./install.sh
- 
- 
-Manuelle Installation 
-bash
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
+```
+
+### Manuelle Installation
+
+```bash
 # 1. Repository klonen
-git clone https://github.com/ [USERNAME]/document-intelligence-system.git
+git clone https://github.com/[USERNAME]/document-intelligence-system.git
 cd document-intelligence-system
 
 # 2. Environment konfigurieren
@@ -146,43 +71,26 @@ docker compose up -d
 # 4. Ollama Modelle laden (optional)
 docker exec -it document-intelligence-system-ollama-1 ollama pull mistral
 docker exec -it document-intelligence-system-ollama-1 ollama pull llama3
- 
- 
-🎮 Verwendung 
-Web-Interfaces 
+```
 
-    N8N : http://localhost:5678  (admin/changeme)
-    Open WebUI : http://localhost:8080 
-    Search API : http://localhost:8001/docs 
-     
+## 🎮 Verwendung
 
-Dokumente hinzufügen 
+### Web-Interfaces
 
-    Lege Dokumente in den ./data Ordner
-    Der Watchdog erkennt neue Dateien automatisch
-    OCR und Indexierung erfolgen automatisch
-    Dokumente sind sofort durchsuchbar
-     
+- **N8N**: http://localhost:5678 (admin/changeme)
+- **Open WebUI**: http://localhost:8080
+- **Search API**: http://localhost:8001/docs
 
-API Beispiele (Python) 
-python
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-⌄
+### Dokumente hinzufügen
+
+- Lege Dokumente in den `./data` Ordner
+- Der Watchdog erkennt neue Dateien automatisch
+- OCR und Indexierung erfolgen automatisch
+- Dokumente sind sofort durchsuchbar
+
+### API Beispiele (Python)
+
+```python
 import requests
 
 # Suche
@@ -197,28 +105,11 @@ doc = requests.get(f'http://localhost:8001/document/{doc_id}')
 
 # Ähnliche Dokumente
 similar = requests.get(f'http://localhost:8001/suggest/{doc_id}')
- 
- 
-🧪 Testing 
-bash
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-15
-16
+```
+
+## 🧪 Testing
+
+```bash
 # Virtuelle Umgebung aktivieren
 source venv/bin/activate  # Linux/macOS
 # oder
@@ -235,27 +126,11 @@ pytest --cov --cov-report=html
 
 # Spezifische Tests
 pytest tests/test_ocr.py -v
- 
- 
-🏗️ Architektur 
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-15
-16
+```
+
+## 🏗️ Architektur
+
+```
 ┌─────────────────────────────────────────────────────────┐
 │                    Open WebUI (UI)                      │
 └────────────────────────┬────────────────────────────────┘
@@ -272,30 +147,11 @@ pytest tests/test_ocr.py -v
 │Watchdog │    │  OCR  │    │ Indexer │    │Learning │
 │ Agent   │    │ Agent │    │  Agent  │    │ Agent   │
 └─────────┘    └───────┘    └─────────┘    └─────────┘
- 
- 
-⚙️ Konfiguration 
-env
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
-13
-14
-15
-16
-17
-18
+```
+
+## ⚙️ Konfiguration
+
+```env
 # OCR
 TESSERACT_LANG=deu+eng
 OCR_ENGINE=tesseract
@@ -314,27 +170,19 @@ REDIS_URL=redis://redis:6379
 # API
 MIN_RELEVANCE_SCORE=0.3
 CACHE_TTL=3600
- 
- 
-📄 Unterstützte Dateiformate 
+```
 
-    Dokumente : PDF, DOCX, DOC, TXT, MD  
-    Bilder : PNG, JPG, JPEG, TIFF, TIF  
-    Weitere : Erweiterbar über Plugins
-     
+## 📄 Unterstützte Dateiformate
 
-🚀 Erweiterte Features 
-Manuelle Verknüpfungen 
-bash
- 
- 
-1
-2
-3
-4
-5
-6
-7
+- **Dokumente**: PDF, DOCX, DOC, TXT, MD  
+- **Bilder**: PNG, JPG, JPEG, TIFF, TIF  
+- **Weitere**: Erweiterbar über Plugins  
+
+## 🚀 Erweiterte Features
+
+### Manuelle Verknüpfungen
+
+```bash
 curl -X POST http://localhost:8001/link \
   -H "Content-Type: application/json" \
   -d '{
@@ -342,31 +190,18 @@ curl -X POST http://localhost:8001/link \
     "doc2_id": "def456...",
     "bidirectional": true
   }'
- 
- 
-N8N Workflows 
+```
 
-    Öffne N8N: http://localhost:5678   
-    Importiere Workflows aus n8n/workflows/  
-    Passe Webhook-URLs an  
-    Aktiviere Workflows
-     
+### N8N Workflows
 
-Ollama Modelle 
-bash
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
+1. Öffne N8N: http://localhost:5678  
+2. Importiere Workflows aus `n8n/workflows/`  
+3. Passe Webhook-URLs an  
+4. Aktiviere Workflows  
+
+### Ollama Modelle
+
+```bash
 # Liste verfügbare Modelle
 docker exec -it document-intelligence-system-ollama-1 ollama list
 
@@ -378,21 +213,13 @@ curl http://localhost:11434/api/generate -d '{
   "model": "mistral",
   "prompt": "Analysiere dieses Dokument..."
 }'
- 
- 
-📊 Monitoring 
-Logs anzeigen 
-bash
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
+```
+
+## 📊 Monitoring
+
+### Logs anzeigen
+
+```bash
 # Alle Services
 docker compose logs -f
 
@@ -401,22 +228,11 @@ docker compose logs -f watchdog
 
 # Letzte 100 Zeilen
 docker compose logs --tail=100
- 
- 
-System-Status 
-bash
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
+```
+
+### System-Status
+
+```bash
 # Service Status
 docker compose ps
 
@@ -427,45 +243,27 @@ docker stats
 docker exec -it document-intelligence-system-redis-1 redis-cli
 > LLEN processing_queue
 > LLEN indexing_queue
- 
- 
-🐛 Troubleshooting 
-OCR erkennt keinen Text
-	
-Prüfe Bildqualität & Spracheinstellung, Logs prüfen
-Keine GPU-Unterstützung
-	
-NVIDIA Container Toolkit installieren, Docker neu starten
-Services starten nicht
-	
-docker compose down -v && docker compose up -d
- 
- 
-🤝 Contributing 
+```
 
-    Fork das Repository
-    Erstelle einen Feature Branch: git checkout -b feature/AmazingFeature
-    Committe deine Änderungen: git commit -m 'Add some AmazingFeature'
-    Push zum Branch: git push origin feature/AmazingFeature
-    Öffne einen Pull Request
-     
+## 🐛 Troubleshooting
 
-Development Setup 
-bash
- 
- 
-1
-2
-3
-4
-5
-6
-7
-8
-9
-10
-11
-12
+| Problem                        | Lösung                                           |
+|-------------------------------|--------------------------------------------------|
+| OCR erkennt keinen Text       | Prüfe Bildqualität & Spracheinstellung, Logs prüfen |
+| Keine GPU-Unterstützung       | NVIDIA Container Toolkit installieren, Docker neu starten |
+| Services starten nicht      | `docker compose down -v && docker compose up -d` |
+
+## 🤝 Contributing
+
+1. Fork das Repository
+2. Erstelle einen Feature Branch: `git checkout -b feature/AmazingFeature`
+3. Committe deine Änderungen: `git commit -m 'Add some AmazingFeature'`
+4. Push zum Branch: `git push origin feature/AmazingFeature`
+5. Öffne einen Pull Request
+
+### Development Setup
+
+```bash
 # Development dependencies
 pip install -r requirements-dev.txt
 
@@ -478,24 +276,23 @@ isort .
 
 # Type checking
 mypy .
- 
- 
-📝 Lizenz 
+```
 
-Dieses Projekt ist unter der MIT-Lizenz lizenziert – siehe LICENSE  für Details. 
-🙏 Danksagungen 
+## 📝 Lizenz
 
-    Tesseract OCR  
-    Ollama  
-    Open WebUI  
-    N8N  
-    spaCy
-     
+Dieses Projekt ist unter der MIT-Lizenz lizenziert – siehe [LICENSE](LICENSE) für Details.
 
-📞 Support 
+## 🙏 Danksagungen
 
-    Issues: [GitHub Issues](https://github.com/  [USERNAME]/document-intelligence-system/issues)
-    Discussions: [GitHub Discussions](https://github.com/  [USERNAME]/document-intelligence-system/discussions)
-    Wiki: [Project Wiki](https://github.com/  [USERNAME]/document-intelligence-system/wiki)
-     
-     
+- Tesseract OCR  
+- Ollama  
+- Open WebUI  
+- N8N  
+- spaCy  
+
+## 📞 Support
+
+- Issues: [GitHub Issues](https://github.com/[USERNAME]/document-intelligence-system/issues)
+- Discussions: [GitHub Discussions](https://github.com/[USERNAME]/document-intelligence-system/discussions)
+- Wiki: [Project Wiki](https://github.com/[USERNAME]/document-intelligence-system/wiki)
+```
