@@ -39,21 +39,29 @@ class DSGVOCompliantIndexer:
             references=references
         )
 
-    def remove_pii(self, text: str) -> str:
-        text = re.sub(self.pii_patterns['email'], '[EMAIL]', text)
-        text = re.sub(self.pii_patterns['phone'], '[PHONE]', text)
-        text = re.sub(self.pii_patterns['iban'], '[IBAN]', text)
-        text = re.sub(self.pii_patterns['personal_id'], '[ID]', text)
-
-        doc = self.nlp(text)
-        for ent in doc.ents:
-            if ent.label_ == 'PER':
-                text = text.replace(ent.text, '[PERSON]')
-            elif ent.label_ == 'LOC':
-                text = text.replace(ent.text, '[LOCATION]')
-            elif ent.label_ == 'ORG' and self.is_sensitive_org(ent.text):
-                text = text.replace(ent.text, '[ORGANIZATION]')
-
+        def remove_pii(self, text: str) -> str:
+            """Entferne personenbezogene Daten"""
+            # Ersetze E-Mails
+            text = re.sub(self.pii_patterns['email'], '[EMAIL]', text)
+    
+            # Ersetze Telefonnummern - FIXED: Bessere Regex für deutsche Nummern
+             text = re.sub(r'\+?49\s*\d+\s*\d+', '[PHONE]', text)
+            text = re.sub(r'0\d{2,4}[\s-]?\d{4,}', '[PHONE]', text)
+    
+            # Ersetze IBANs - FIXED: Vollständige IBAN erkennen
+            text = re.sub(r'\b[A-Z]{2}\d{2}\s?(?:[A-Z0-9]\s?){1,30}\b', '[IBAN]', text)
+    
+            # Nutze NER für Namen
+            if self.nlp:
+                doc = self.nlp(text)
+                for ent in doc.ents:
+                    if ent.label_ == 'PER':
+                        text = text.replace(ent.text, '[PERSON]')
+                elif ent.label_ == 'LOC' and len(ent.text) > 3:
+                    text = text.replace(ent.text, '[LOCATION]')
+                elif ent.label_ == 'ORG' and self.is_sensitive_org(ent.text):
+                    text = text.replace(ent.text, '[ORGANIZATION]')
+    
         return text
 
     def extract_sections(self, text: str) -> List[Dict]:
