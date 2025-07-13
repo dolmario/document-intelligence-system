@@ -1,32 +1,78 @@
-yaml# docker-compose.yml Erweiterung
+yamlversion: '3.8'
+
 services:
-  index_generator:
-    build: ./services/indexer
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
     volumes:
-      - ./data:/data
-      - ./indices:/indices
+      - redis_data:/data
+    networks:
+      - doc_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  watchdog:
+    build: 
+      context: .
+      dockerfile: agents/watchdog/Dockerfile
+    volumes:
+      - ./data:/data:ro
+      - ./logs:/logs
     environment:
+      - WATCH_PATHS=/data
+      - REDIS_URL=redis://redis:6379
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  ocr_agent:
+    build: 
+      context: .
+      dockerfile: agents/ocr/Dockerfile
+    volumes:
+      - ./data:/data:ro
+      - ./indices:/indices
+      - ./logs:/logs
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - TESSERACT_LANG=deu+eng
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  indexer:
+    build: 
+      context: .
+      dockerfile: agents/indexer/Dockerfile
+    volumes:
+      - ./data:/data:ro
+      - ./indices:/indices
+      - ./logs:/logs
+    environment:
+      - REDIS_URL=redis://redis:6379
       - INDEX_FORMAT=markdown_json
       - PII_REMOVAL=strict
       - LANGUAGE=de
-    command: python index_generator.py --watch
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+    networks:
+      - doc_network
+    restart: unless-stopped
 
-  search_api:
-    build: ./services/search
-    ports:
-      - "8002:8002"
-    volumes:
-      - ./indices:/indices
-    environment:
-      - CACHE_TTL=3600
-      - MIN_RELEVANCE_SCORE=0.3
+networks:
+  doc_network:
+    driver: bridge
 
-  learning_service:
-    build: ./services/learning
-    volumes:
-      - ./indices:/indices
-      - ./learning_data:/learning_data
-    environment:
-      - LEARNING_THRESHOLD=0.3
-      - UPDATE_INTERVAL=300
- 
+volumes:
+  redis_data:
