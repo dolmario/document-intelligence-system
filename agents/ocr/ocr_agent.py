@@ -1,4 +1,3 @@
-python# agents/ocr/ocr_agent.py
 import asyncio
 import json
 import pytesseract
@@ -12,6 +11,7 @@ import logging
 from core.utils import setup_logger, config
 from core.models import ProcessingTask
 from core.privacy import PrivacyManager
+from datetime import datetime
 
 logger = setup_logger('ocr_agent', 'logs/ocr.log')
 
