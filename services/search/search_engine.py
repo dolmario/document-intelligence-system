@@ -1,9 +1,40 @@
 # search_engine.py
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 import json
 from fuzzywuzzy import fuzz
 from sentence_transformers import SentenceTransformer
 import numpy as np
+from pathlib import Path
+import asyncio
+import logging
+
+# Logger konfigurieren
+logger = logging.getLogger(__name__)
+
+class DocumentIndex:
+    """Dummy-Klasse zur Repräsentation eines dokumentierten Indexes"""
+    def __init__(self, doc_id: str, title: str, keywords: List[str], sections: List[Dict], references: List[str]):
+        self.doc_id = doc_id
+        self.title = title
+        self.keywords = keywords
+        self.sections = sections
+        self.references = references
+        self.semantic_links: Dict[str, float] = {}
+    
+    @classmethod
+    def from_json(cls, json_str: str):
+        data = json.loads(json_str)
+        return cls(
+            doc_id=data['doc_id'],
+            title=data['title'],
+            keywords=data.get('keywords', []),
+            sections=data.get('sections', []),
+            references=data.get('references', [])
+        )
+    
+    def save(self, base_path: Path):
+        """Dummy-Speichermethode"""
+        pass
 
 class IntelligentSearchEngine:
     def __init__(self, index_path: str):
@@ -13,13 +44,31 @@ class IntelligentSearchEngine:
         self.load_indices()
         
     def load_indices(self):
-        """Lade alle Markdown/JSON Indizes"""
+        """Lade alle Markdown/JSON Indizes (synchron)"""
         # Implementierung zum Laden der Indizes
         pass
     
-    def search(self, query: str, filters: Dict = None) -> List[Tuple[DocumentIndex, float]]:
-        """Mehrstufige intelligente Suche"""
+    async def load_indices_async(self):
+        """Lade alle Indizes asynchron"""
+        json_path = Path(self.index_path) / "json"
         
+        if not json_path.exists():
+            logger.warning(f"Index-Verzeichnis existiert nicht: {json_path}")
+            return
+        
+        for json_file in json_path.glob("*.json"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    doc = DocumentIndex.from_json(json.dumps(data))
+                    self.indices[doc.doc_id] = doc
+            except Exception as e:
+                logger.error(f"Fehler beim Laden von {json_file}: {str(e)}")
+        
+        logger.info(f"{len(self.indices)} Indizes geladen")
+
+    def search(self, query: str, filters: Dict = None) -> List[Tuple[DocumentIndex, float]]:
+        """Mehrstufige intelligente Suche (synchron)"""
         # 1. Keyword-basierte Vorfilterung
         keyword_matches = self.keyword_search(query)
         
@@ -33,7 +82,23 @@ class IntelligentSearchEngine:
         ranked_results = self.apply_learning_boost(expanded_results, query)
         
         return ranked_results
-    
+
+    async def search_async(self, query: str, filters: Dict = None, limit: int = 20):
+        """Asynchrone Suche"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.search, query, filters)
+
+    async def get_document_async(self, doc_id: str) -> Optional[DocumentIndex]:
+        """Hole Dokument asynchron"""
+        return self.indices.get(doc_id)
+
+    async def update_semantic_link_async(self, doc1_id: str, doc2_id: str, score: float):
+        """Aktualisiere semantische Verknüpfung"""
+        if doc1_id in self.indices:
+            self.indices[doc1_id].semantic_links[doc2_id] = score
+            # Speichere aktualisierten Index
+            self.indices[doc1_id].save(Path(self.index_path))
+
     def keyword_search(self, query: str) -> List[str]:
         """Schnelle Keyword-basierte Suche im JSON-Index"""
         query_terms = query.lower().split()
@@ -65,7 +130,7 @@ class IntelligentSearchEngine:
         # Sortiere nach Score
         matches.sort(key=lambda x: x[1], reverse=True)
         return [m[0] for m in matches[:50]]  # Top 50 für semantische Suche
-    
+
     def semantic_search(self, query: str, candidate_ids: List[str]) -> List[Tuple[str, float]]:
         """Semantische Ähnlichkeitssuche"""
         query_embedding = self.encoder.encode(query)
@@ -89,7 +154,7 @@ class IntelligentSearchEngine:
         
         results.sort(key=lambda x: x[1], reverse=True)
         return results
-    
+
     def expand_with_links(self, results: List[Tuple[str, float]]) -> List[Tuple[str, float]]:
         """Erweitere Ergebnisse basierend auf Verknüpfungen"""
         expanded = dict(results)
@@ -111,3 +176,9 @@ class IntelligentSearchEngine:
                         expanded[link_id] = max(expanded[link_id], score * link_score * 0.3)
         
         return sorted(expanded.items(), key=lambda x: x[1], reverse=True)
+
+    def apply_learning_boost(self, results: List[Tuple[str, float]], query: str) -> List[Tuple[str, float]]:
+        """Wende Learning-basiertes Ranking an (Placeholder)"""
+        # Hier würde normalerweise der Learning Agent eingreifen
+        # Aktuell: Einfache Rückgabe der unveränderten Ergebnisse
+        return results
