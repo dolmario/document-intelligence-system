@@ -3,16 +3,22 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict
 import re
-from core.models import DocumentIndex
-from collections import defaultdict
-import numpy as np
-from datetime import datetime, timedelta
+import hashlib
 
 class LinkLearningAgent:
     def __init__(self):
         self.co_access_matrix = defaultdict(lambda: defaultdict(int))
         self.search_patterns = defaultdict(list)
         self.manual_links = defaultdict(set)
+    
+    def anonymize_query(self, query: str) -> str:
+        """Anonymisiere Suchanfrage"""
+        # Einfache Anonymisierung durch Hash
+        return hashlib.sha256(query.encode()).hexdigest()[:16]
+    
+    async def learn_from_search_async(self, query: str, clicked_results: List[str]):
+        """Asynchrone Version von learn_from_search"""
+        self.learn_from_search(query, clicked_results)
         
     def learn_from_search(self, query: str, clicked_results: List[str]):
         """Lerne aus Suchmustern"""
@@ -40,10 +46,11 @@ class LinkLearningAgent:
         if doc_id in self.co_access_matrix:
             total_accesses = sum(self.co_access_matrix[doc_id].values())
             
-            for linked_doc, count in self.co_access_matrix[doc_id].items():
-                confidence = count / total_accesses
-                if confidence > threshold:
-                    suggestions[linked_doc] = confidence
+            if total_accesses > 0:
+                for linked_doc, count in self.co_access_matrix[doc_id].items():
+                    confidence = count / total_accesses
+                    if confidence > threshold:
+                        suggestions[linked_doc] = confidence
         
         # 2. Suchmuster-basierte Vorschläge
         doc_queries = [p['query'] for p in self.search_patterns.get(doc_id, [])]
@@ -54,7 +61,7 @@ class LinkLearningAgent:
                 
                 # Berechne Query-Überlappung
                 overlap = len(set(doc_queries) & set(other_queries))
-                if overlap > 0:
+                if overlap > 0 and len(doc_queries) > 0 and len(other_queries) > 0:
                     overlap_score = overlap / max(len(doc_queries), len(other_queries))
                     if overlap_score > threshold:
                         if other_doc in suggestions:
@@ -69,16 +76,16 @@ class LinkLearningAgent:
         return suggestions
     
     def add_manual_link(self, doc1: str, doc2: str, bidirectional: bool = True):
-        """Füge manuelle Verknüpfung hinzu (z.B. für aufeinander aufbauende Arbeiten)"""
+        """Füge manuelle Verknüpfung hinzu"""
         self.manual_links[doc1].add(doc2)
         if bidirectional:
             self.manual_links[doc2].add(doc1)
     
-    def detect_sequential_documents(self, indices: Dict[str, DocumentIndex]):
+    def detect_sequential_documents(self, indices: Dict[str, Any]):
         """Erkenne aufeinander aufbauende Dokumente"""
         for doc_id, index in indices.items():
             # Suche nach Hinweisen auf Fortsetzungen
-            content = ' '.join([s['content'] for s in index.sections])
+            content = ' '.join([s.get('content', '') for s in index.sections])
             
             sequential_patterns = [
                 r'Teil (\d+) von (\d+)',
@@ -91,6 +98,5 @@ class LinkLearningAgent:
             for pattern in sequential_patterns:
                 matches = re.finditer(pattern, content, re.IGNORECASE)
                 for match in matches:
-                    # Versuche verwandte Dokumente zu finden
-                    # ... Implementierung der Logik
+                    # Hier würde die Logik zur Verknüpfung implementiert
                     pass
