@@ -1,4 +1,3 @@
-python# agents/watchdog/watchdog_agent.py
 import asyncio
 import json
 import hashlib
