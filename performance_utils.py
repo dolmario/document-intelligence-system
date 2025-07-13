@@ -2,6 +2,7 @@
 import mmap
 import pickle
 from functools import lru_cache
+from typing import List
 
 class FastIndexSearch:
     def __init__(self, index_file: str):
