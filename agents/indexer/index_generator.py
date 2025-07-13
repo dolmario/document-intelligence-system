@@ -136,6 +136,3 @@ class DSGVOCompliantIndexer:
             if field in metadata:
                 safe_metadata[field] = metadata[field]
         return safe_metadata
-
-        
-        return list(set(references))
