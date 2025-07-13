@@ -6,22 +6,39 @@ Ein modulares, DSGVO-konformes Dokumenten- und Wissensmanagement-System mit inte
 
 ---
 
-## 🔧 Features (geplant & teilweise umgesetzt)
+[![Tests](https://github.com/ [USERNAME]/document-intelligence-system/actions/workflows/test.yml/badge.svg)](https://github.com/ [USERNAME]/document-intelligence-system/actions/workflows/test.yml)
+[![Docker](https://img.shields.io/docker/pulls/ [USERNAME]/doc-intelligence)](https://hub.docker.com/r/ [USERNAME]/doc-intelligence)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg )](LICENSE)
 
-- 🔍 Intelligente Volltext- und Inhalts-Suche
-- 🤖 Lokale OCR-Verarbeitung (Tesseract)
-- 🧠 Lernfähige Agenten zur Verknüpfung & Priorisierung
-- 🔒 DSGVO-konforme Verarbeitung & lokale Speicherung
-- 🔗 Automatische semantische Verknüpfung zwischen Dokumenten
-- 🧩 N8N-Integration für Automatisierung & Trigger-Workflows
-- 🧠 Lokale KI-Modelle via [Ollama](https://ollama.com/) (optional)
+Ein modulares, DSGVO-konformes Dokumenten- und Wissensmanagement-System mit intelligenter Volltextsuche, semantischer Verknüpfung und KI-Unterstützung.
 
----
+## 🚀 Features
 
-## 🚀 Quickstart (lokal)
+- 🔍 **Intelligente Suche**: Volltext- und semantische Suche mit KI  
+- 🤖 **Lokale OCR**: Tesseract-basierte Texterkennung  
+- 🧠 **Lernfähig**: Verbessert sich durch Nutzungsmuster  
+- 🔒 **DSGVO-konform**: Vollständig lokale Verarbeitung  
+- 🔗 **Automatische Verknüpfungen**: Erkennt Zusammenhänge  
+- 🎯 **N8N Integration**: Workflow-Automatisierung  
+- 🤖 **Ollama Integration**: Lokale KI-Modelle  
+- 📊 **Open WebUI**: Moderne Benutzeroberfläche  
 
-```bash
-git clone https://github.com/[DEIN-GITHUB-USERNAME]/document-intelligence-system.git
+## 📋 Voraussetzungen
+
+| Komponente     | Anforderung                              |
+|----------------|-------------------------------------------|
+| **OS**         | Windows 11, Linux, macOS                  |
+| **Python**     | 3.10+                                     |
+| **Docker**     | Docker Desktop (Windows/Mac) oder Engine  |
+| **RAM**        | Mindestens 8GB (16GB empfohlen)           |
+| **GPU**        | NVIDIA GPU (optional)                     |
+| **Speicher**   | 20GB+ freier Speicherplatz                |
+
+## 🛠️ Installation
+
+### Windows (PowerShell als Administrator)
+
+```powershell
+git clone https://github.com/ [USERNAME]/document-intelligence-system.git
 cd document-intelligence-system
-docker compose up -d
-
+.\install.ps1
