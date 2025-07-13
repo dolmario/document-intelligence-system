@@ -1,4 +1,3 @@
-python# test_pipeline.py
 import asyncio
 import redis.asyncio as redis
 import json
