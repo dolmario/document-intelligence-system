@@ -1,6 +1,3 @@
-## 5. API Konfiguration (config/api_config.py)
-```python
-# config/api_config.py
 from pydantic import BaseSettings, Field
 from typing import Optional
 import os
