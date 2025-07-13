@@ -1,7 +1,12 @@
 from collections import defaultdict
 import numpy as np
 from datetime import datetime, timedelta
-from typing import List, Dict, import re, from core.models import DocumentIndex
+from typing import List, Dict
+import re
+from core.models import DocumentIndex
+from collections import defaultdict
+import numpy as np
+from datetime import datetime, timedelta
 
 class LinkLearningAgent:
     def __init__(self):
