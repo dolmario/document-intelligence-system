@@ -1,70 +1,66 @@
-name: Auto Fix Lint & Imports
+name: Auto Fix Imports & References
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - develop
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  autofix:
+  auto-fix:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Auto-fix common issues
+      - name: Apply automatic code fixes
+        run: |
+          find . -type f -name "*.py" ! -path "./venv/*" -exec sed -i \
+            -e 's|from huggingface_hub import cached_download|from huggingface_hub import hf_hub_download as cached_download|g' \
+            -e '/^references *=/ s/=.*/= list(set(references))/' \
+            {} +
+
+      - name: Configure Git
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH_NAME="auto/fix-linting-imports"
+      - name: Create and push new branch
+        run: |
+          BRANCH="auto/fix-$(date +%s)"
+          git checkout -b "$BRANCH"
 
-          git checkout -b "$BRANCH_NAME"
+          # Don't stage changes in workflows directory
+          git add -u ':!**/.github/workflows/**'
 
-          # === 1. Fix 'references' undefined ===
-          grep -rl 'return list(set(references))' . | while read file; do
-            sed -i '/return list(set(references))/i\references = []  # TODO: replace with actual references' "$file"
-          done
-
-          # === 2. Remove lines starting with 'python#' ===
-          grep -rl '^python#' . | while read file; do
-            sed -i '/^python#/d' "$file"
-          done
-
-          # === 3. Fix deprecated huggingface_hub import ===
-          grep -rl 'from huggingface_hub import cached_download' . | while read file; do
-            sed -i 's/from huggingface_hub import cached_download/from huggingface_hub import hf_hub_download as cached_download/' "$file"
-          done
-
-          if git diff --quiet; then
-            echo "No fixes needed"
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
             exit 0
           fi
 
-          git add .
-          git commit -m "fix: auto-fix references, imports, and invalid comments"
-          git push origin "$BRANCH_NAME"
+          git commit -m "fix: auto-fix references, imports, and redundant list()"
+          git push origin "$BRANCH"
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v5
         with:
-          branch: auto/fix-linting-imports
-          title: "chore: auto-fix references, imports, and comments"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "fix: auto-fix references, imports, and redundant list()"
+          branch: ${{ github.ref_name }}
+          base: ${{ github.ref_name }}
+          title: "Auto-fix: imports, references cleanup"
           body: |
-            This PR was automatically created by GitHub Actions to fix common lint/import issues:
-            - undefined `references`
-            - remove `python#` comment lines
-            - replace deprecated `cached_download` with `hf_hub_download`
-          commit-message: "fix: auto-fix references, imports, and invalid comments"
-          delete-branch: true
+            This PR was automatically created by a GitHub Action.
+            - Updated deprecated imports
+            - Cleaned up `references = ...` patterns
+            - Skipped pushing changes to `.github/workflows` to avoid permission errors
