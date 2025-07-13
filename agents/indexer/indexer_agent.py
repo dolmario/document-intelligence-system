@@ -1,4 +1,3 @@
-python# agents/indexer/indexer_agent.py
 import asyncio
 import json
 from pathlib import Path
