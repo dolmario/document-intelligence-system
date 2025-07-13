@@ -1,4 +1,3 @@
-txt# agents/ocr/requirements.txt
 redis==5.0.1
 pytesseract==0.3.10
 Pillow==10.1.0
