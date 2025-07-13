@@ -16,8 +16,8 @@ class PrivacyManager:
             
         self.pii_patterns = {
             'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-            'phone': r'\b(?:\+49|0)[1-9]\d{1,14}\b',
-            'iban': r'\b[A-Z]{2}\d{2}[A-Z0-9]{1,30}\b',
+            'phone': r'(?:\+49|0049|0)\s*(?:\d{2,4}[\s-]?\d{4,}|\d{3,4}[\s-]?\d{6,})',
+            'iban': r'\b[A-Z]{2}\d{2}\s?(?:[A-Z0-9]\s?){1,30}\b',
             'personal_id': r'\b\d{8,12}\b',
             'ip_address': r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b',
             'credit_card': r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b',
@@ -30,35 +30,25 @@ class PrivacyManager:
     
     def anonymize_text(self, text: str) -> str:
         """Entferne oder anonymisiere PII aus Text"""
-    if not text:
+        if not text:
+            return text
+        
+        # Ersetze Pattern-basierte PII
+        for pii_type, pattern in self.pii_patterns.items():
+            text = re.sub(pattern, f'[{pii_type.upper()}]', text, flags=re.IGNORECASE)
+        
+        # NER-basierte Anonymisierung wenn Spacy verfügbar
+        if self.nlp:
+            doc = self.nlp(text)
+            for ent in doc.ents:
+                if ent.label_ == 'PER':
+                    text = text.replace(ent.text, '[PERSON]')
+                elif ent.label_ == 'LOC' and len(ent.text) > 3:
+                    text = text.replace(ent.text, '[LOCATION]')
+                elif ent.label_ == 'ORG' and self._is_sensitive_org(ent.text):
+                    text = text.replace(ent.text, '[ORGANIZATION]')
+        
         return text
-    
-    # Verbesserte Regex Patterns
-    self.pii_patterns = {
-        'email': r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-        'phone': r'(?:\+49|0049|0)\s*(?:\d{2,4}[\s-]?\d{4,}|\d{3,4}[\s-]?\d{6,})',
-        'iban': r'\b[A-Z]{2}\d{2}\s?(?:[A-Z0-9]\s?){1,30}\b',
-        'personal_id': r'\b\d{8,12}\b',
-        'ip_address': r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b',
-        'credit_card': r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b',
-    }
-    
-    # Ersetze Pattern-basierte PII
-    for pii_type, pattern in self.pii_patterns.items():
-        text = re.sub(pattern, f'[{pii_type.upper()}]', text, flags=re.IGNORECASE)
-    
-    # NER-basierte Anonymisierung wenn Spacy verfügbar
-    if self.nlp:
-        doc = self.nlp(text)
-        for ent in doc.ents:
-            if ent.label_ == 'PER':
-                text = text.replace(ent.text, '[PERSON]')
-            elif ent.label_ == 'LOC' and len(ent.text) > 3:
-                text = text.replace(ent.text, '[LOCATION]')
-            elif ent.label_ == 'ORG' and self._is_sensitive_org(ent.text):
-                text = text.replace(ent.text, '[ORGANIZATION]')
-    
-    return text
     
     def _is_sensitive_org(self, org_name: str) -> bool:
         """Prüfe ob Organisation sensibel ist"""
