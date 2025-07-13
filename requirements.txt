@@ -1,4 +1,4 @@
-txt# Core dependencies
+# Core dependencies
 python-dotenv==1.0.0
 redis==5.0.1
 fastapi==0.104.1
