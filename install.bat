@@ -1,228 +1,108 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal EnableDelayedExpansion EnableExtensions
 
-REM === Sicherer Start für Installations-Batch ===
-REM Wechsel ins Verzeichnis, in dem das Skript liegt
-cd /d "%~dp0"
+REM === Document Intelligence System - Windows Batch Installation ===
+REM Version 2.0 - Umfassende Fixes und Validierungen
 
-REM Sicherheitscheck: verbotene Verzeichnisse
-set "BADFOLDER1=C:\Windows"
-set "BADFOLDER2=C:\Windows\System32"
-set "BADFOLDER3=C:\Program Files"
-set "BADFOLDER4=C:\Program Files (x86)"
+REM Initialisierung
+set "SCRIPT_NAME=install.bat"
+set "LOG_FILE=install_batch.log"
+set "ERROR_LEVEL=0"
+set "INSTALL_START_TIME=%date% %time%"
 
-set "CURDIR=%cd%"
+REM Lösche altes Log
+if exist "%LOG_FILE%" del "%LOG_FILE%"
 
-if /i "%CURDIR%"=="%BADFOLDER1%" (
-    echo FEHLER: Bitte das Skript nicht direkt aus %CURDIR% starten!
-    pause
-    exit /b 1
-)
-if /i "%CURDIR%"=="%BADFOLDER2%" (
-    echo FEHLER: Bitte das Skript nicht direkt aus %CURDIR% starten!
-    pause
-    exit /b 1
-)
-if /i "%CURDIR%"=="%BADFOLDER3%" (
-    echo FEHLER: Bitte das Skript nicht direkt aus %CURDIR% starten!
-    pause
-    exit /b 1
-)
-if /i "%CURDIR%"=="%BADFOLDER4%" (
-    echo FEHLER: Bitte das Skript nicht direkt aus %CURDIR% starten!
-    pause
-    exit /b 1
-)
+REM === LOGGING FUNKTIONEN ===
+:LOG
+echo [%date% %time%] %~1 | tee -a "%LOG_FILE%"
+echo [%date% %time%] %~1
+goto :eof
 
-echo === Document Intelligence System Installation (Windows) ===
-echo ============================================================
+:LOG_ERROR
+echo [%date% %time%] [ERROR] %~1 | tee -a "%LOG_FILE%"
+echo [%date% %time%] [ERROR] %~1
+set "ERROR_LEVEL=1"
+goto :eof
 
-:: Check for Admin rights
-net session >nul 2>&1
-if %errorLevel% neq 0 (
-    echo FEHLER: Bitte als Administrator ausfuehren!
-    pause
-    exit /b 1
-)
+:LOG_SUCCESS
+echo [%date% %time%] [SUCCESS] %~1 | tee -a "%LOG_FILE%"
+echo [%date% %time%] [SUCCESS] %~1
+goto :eof
 
-:: Create directories first
+:LOG_WARN
+echo [%date% %time%] [WARN] %~1 | tee -a "%LOG_FILE%"
+echo [%date% %time%] [WARN] %~1
+goto :eof
+
+REM === HEADER FUNKTION ===
+:SHOW_HEADER
 echo.
-echo Creating directory structure...
-if not exist "data" mkdir data
-if not exist "indices" mkdir indices
-if not exist "indices\json" mkdir indices\json
-if not exist "indices\markdown" mkdir indices\markdown
-if not exist "logs" mkdir logs
-if not exist "n8n\workflows" mkdir n8n\workflows
+echo ================================================================
+echo %~1
+echo ================================================================
+call :LOG "=== %~1 ==="
+goto :eof
 
-:: Create .gitkeep files
-echo. > data\.gitkeep
-echo. > indices\.gitkeep
-echo. > logs\.gitkeep
-
-echo ✓ Verzeichnisse erstellt
-
-:: Check Python
+REM === FEHLER HANDLER ===
+:EXIT_WITH_ERROR
+call :LOG_ERROR "%~1"
 echo.
-echo Checking Python...
-python --version >nul 2>&1
-if %errorLevel% neq 0 (
-    echo FEHLER: Python nicht gefunden. Bitte installieren.
-    pause
-    exit /b 1
-)
-echo ✓ Python gefunden
-
-:: Check Docker
-echo.
-echo Checking Docker...
-docker --version >nul 2>&1
-if %errorLevel% neq 0 (
-    echo FEHLER: Docker nicht gefunden. Bitte Docker Desktop installieren.
-    pause
-    exit /b 1
-)
-echo ✓ Docker gefunden
-
-:: Check if Docker is running
-docker ps >nul 2>&1
-if %errorLevel% neq 0 (
-    echo FEHLER: Docker laeuft nicht. Bitte Docker Desktop starten.
-    pause
-    exit /b 1
-)
-echo ✓ Docker laeuft
-
-:: Setup environment
-echo.
-echo Setting up environment...
-if not exist ".env" (
-    copy .env.example .env
-    echo ✓ .env Datei erstellt
-    echo ⚠ Bitte .env Datei anpassen!
-) else (
-    echo ⚠ .env existiert bereits
-)
-
-:: Python Virtual Environment
-echo.
-echo Creating Python virtual environment...
-if not exist "venv" (
-    python -m venv venv
-    echo ✓ Virtual environment erstellt
-)
-
-:: Install Python dependencies
-echo.
-echo Installing Python dependencies...
-call venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python -m spacy download de_core_news_sm
-echo ✓ Python Dependencies installiert
-
-:: Pull Docker images individually to avoid network issues
-echo.
-echo Pulling Docker images (this may take a while)...
-echo.
-
-echo Pulling Redis...
-docker pull redis:7-alpine
-
-echo Pulling N8N...
-docker pull docker.n8n.io/n8nio/n8n
-
-echo Pulling Postgres...
-docker pull postgres:16-alpine
-
-echo Pulling Ollama (large image - may take longer)...
-docker pull ollama/ollama:latest
-
-echo Pulling Open WebUI...
-docker pull ghcr.io/open-webui/open-webui:main
-
-echo ✓ Docker images pulled
-
-:: Start services
-echo.
-echo Starting services...
-docker compose up -d
-
-:: Wait for services
-echo.
-echo Waiting for services to start (30 seconds)...
-timeout /t 30 /nobreak >nul
-
-:: Check services
-echo.
-echo Checking services...
-curl -s http://localhost:6379 >nul 2>&1
-if %errorLevel% eq 0 (
-    echo ✓ Redis running
-) else (
-    echo ⚠ Redis not reachable
-)
-
-curl -s http://localhost:5678 >nul 2>&1
-if %errorLevel% eq 0 (
-    echo ✓ N8N running at http://localhost:5678
-) else (
-    echo ⚠ N8N not reachable
-)
-
-curl -s http://localhost:8001 >nul 2>&1
-if %errorLevel% eq 0 (
-    echo ✓ Search API running at http://localhost:8001
-) else (
-    echo ⚠ Search API not reachable
-)
-
-curl -s http://localhost:8080 >nul 2>&1
-if %errorLevel% eq 0 (
-    echo ✓ Open WebUI running at http://localhost:8080
-) else (
-    echo ⚠ Open WebUI not reachable
-)
-
-:: Create test document
-echo.
-set /p create_test="Create test document? (y/n): "
-if /i "%create_test%"=="y" (
-    echo Dies ist ein Test-Dokument fuer das Document Intelligence System. > data\test_document.txt
-    echo. >> data\test_document.txt
-    echo Es enthaelt verschiedene Abschnitte und Informationen. >> data\test_document.txt
-    echo. >> data\test_document.txt
-    echo Features: >> data\test_document.txt
-    echo - Automatische Texterkennung >> data\test_document.txt
-    echo - DSGVO-konforme Verarbeitung >> data\test_document.txt
-    echo - Intelligente Verknuepfungen >> data\test_document.txt
-    echo. >> data\test_document.txt
-    echo Kontakt: test@example.com >> data\test_document.txt
-    echo Tel: +49 123 456789 >> data\test_document.txt
-    
-    echo ✓ Test document created
-)
-
-:: Final message
-echo.
-echo =========================================
-echo Installation completed!
-echo =========================================
-echo.
-echo Services:
-echo   - N8N:         http://localhost:5678 (admin/changeme)
-echo   - Open WebUI:  http://localhost:8080
-echo   - Search API:  http://localhost:8001/docs
-echo   - Redis:       localhost:6379
-echo.
-echo Next steps:
-echo   1. Edit .env file
-echo   2. Add documents to .\data
-echo   3. Open WebUI for search
-echo.
-echo Commands:
-echo   docker compose logs -f    (view logs)
-echo   docker compose down       (stop services)
-echo   docker compose ps         (check status)
+echo INSTALLATION FEHLGESCHLAGEN!
+echo Siehe %LOG_FILE% für Details.
 echo.
 pause
+exit /b 1
+
+REM === SICHERHEITSCHECKS ===
+:CHECK_SECURITY
+call :SHOW_HEADER "SICHERHEITSCHECKS"
+
+REM Admin-Rechte prüfen
+call :LOG "Prüfe Administrator-Rechte..."
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    call :EXIT_WITH_ERROR "FEHLER: Bitte als Administrator ausführen!"
+)
+call :LOG_SUCCESS "Administrator-Rechte verfügbar"
+
+REM Verzeichnis-Validierung
+set "CURRENT_DIR=%cd%"
+call :LOG "Aktuelles Verzeichnis: %CURRENT_DIR%"
+
+REM Verbotene Verzeichnisse
+set "FORBIDDEN_1=C:\Windows\System32"
+set "FORBIDDEN_2=C:\Windows"
+set "FORBIDDEN_3=C:\Program Files"
+set "FORBIDDEN_4=C:\Program Files (x86)"
+
+if /i "%CURRENT_DIR%"=="%FORBIDDEN_1%" call :EXIT_WITH_ERROR "Installation aus System32 nicht erlaubt!"
+if /i "%CURRENT_DIR%"=="%FORBIDDEN_2%" call :EXIT_WITH_ERROR "Installation aus Windows-Verzeichnis nicht erlaubt!"
+if /i "%CURRENT_DIR%"=="%FORBIDDEN_3%" call :EXIT_WITH_ERROR "Installation aus Program Files nicht erlaubt!"
+if /i "%CURRENT_DIR%"=="%FORBIDDEN_4%" call :EXIT_WITH_ERROR "Installation aus Program Files (x86) nicht erlaubt!"
+
+REM Projekt-Verzeichnis validieren
+if not exist "docker-compose.yml" (
+    call :EXIT_WITH_ERROR "docker-compose.yml nicht gefunden. Bitte aus Projekt-Root ausführen!"
+)
+
+call :LOG_SUCCESS "Sicherheitschecks bestanden"
+goto :eof
+
+REM === SOFTWARE PRÜFUNG ===
+:CHECK_SOFTWARE
+call :SHOW_HEADER "SOFTWARE-KOMPONENTEN PRÜFEN"
+
+REM Python Check
+call :LOG "Prüfe Python Installation..."
+python --version >nul 2>&1
+if %errorLevel% neq 0 (
+    call :EXIT_WITH_ERROR "Python nicht gefunden. Bitte von python.org installieren!"
+)
+
+for /f "tokens=2" %%v in ('python --version 2^>^&1') do set "PYTHON_VERSION=%%v"
+call :LOG_SUCCESS "Python gefunden: %PYTHON_VERSION%"
+
+REM Python Version Check (vereinfacht)
+for /f "tokens=1,2 delims=." %%a in ("%PYTHON_VERSION%") do (
+    set "PY_
