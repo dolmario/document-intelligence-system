@@ -19,7 +19,7 @@
           "string": [
             {
               "value1": "={{$json[\"event\"]}}",
-              "operation": "equals",
+              "operation": "equals", 
               "value2": "file_added"
             }
           ]
@@ -42,8 +42,8 @@
               "value": "={{$json[\"query\"]}}"
             },
             {
-              "name": "use_ai",
-              "value": "={{$json[\"use_ai\"]}}"
+              "name": "limit", 
+              "value": "={{$json[\"limit\"] || 5}}"
             }
           ]
         },
@@ -67,22 +67,26 @@
             },
             {
               "name": "prompt",
-              "value": "Analysiere diese Suchergebnisse und fasse sie zusammen: {{$json}}"
+              "value": "Analysiere diese Suchergebnisse: {{JSON.stringify($json)}}"
+            },
+            {
+              "name": "stream",
+              "value": false
             }
           ]
         },
         "options": {}
       },
       "name": "AI Analysis",
-      "type": "n8n-nodes-base.httpRequest",
+      "type": "n8n-nodes-base.httpRequest", 
       "typeVersion": 3,
       "position": [850, 200]
     },
     {
       "parameters": {
         "operation": "set",
-        "key": "search_result_{{$json[\"search_id\"]}}",
-        "value": "={{$json}}"
+        "key": "search_result_{{$json[\"search_id\"] || 'default'}}",
+        "value": "={{JSON.stringify($json)}}"
       },
       "name": "Cache Results",
       "type": "n8n-nodes-base.redis",
@@ -106,7 +110,7 @@
       "main": [
         [
           {
-            "node": "Search Documents",
+            "node": "Search Documents", 
             "type": "main",
             "index": 0
           }
@@ -118,7 +122,7 @@
         [
           {
             "node": "AI Analysis",
-            "type": "main",
+            "type": "main", 
             "index": 0
           }
         ]
@@ -135,5 +139,8 @@
         ]
       ]
     }
-  }
+  },
+  "active": true,
+  "settings": {},
+  "versionId": "1"
 }
