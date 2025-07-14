@@ -6,12 +6,14 @@ import asyncio
 from pathlib import Path
 import json
 import logging
+import os
 
 from core.utils import setup_logger, config
 from services.search.search_engine import IntelligentSearchEngine
 from services.learning.learning_agent import LinkLearningAgent
 
-logger = setup_logger('search_api', 'logs/search_api.log')
+# FIXED: Korrigierter Logger-Aufruf ohne doppelten logs-Pfad
+logger = setup_logger('search_api', 'search_api.log')
 
 app = FastAPI(
     title="Document Intelligence Search API",
@@ -19,13 +21,18 @@ app = FastAPI(
     description="DSGVO-konforme Dokumentensuche mit KI-Unterstützung"
 )
 
-# CORS für WebUI
+# FIXED: Sichere CORS-Konfiguration aus Umgebungsvariablen
+cors_origins = os.getenv('CORS_ALLOW_ORIGIN', 'http://localhost:8080').split(',')
+cors_credentials = os.getenv('CORS_ALLOW_CREDENTIALS', 'false').lower() == 'true'
+cors_methods = os.getenv('CORS_ALLOW_METHODS', 'GET,POST,PUT,DELETE').split(',')
+cors_headers = os.getenv('CORS_ALLOW_HEADERS', '*').split(',')
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_credentials=cors_credentials,
+    allow_methods=cors_methods,
+    allow_headers=cors_headers,
 )
 
 # Globale Instanzen
@@ -88,6 +95,15 @@ async def root():
             "/link": "Manuelle Verknüpfung",
             "/stats": "System-Statistiken"
         }
+    }
+
+@app.get("/health")
+async def health_check():
+    """Health Check Endpoint"""
+    return {
+        "status": "healthy",
+        "search_engine_loaded": search_engine is not None,
+        "indices_count": len(search_engine.indices) if search_engine else 0
     }
 
 @app.post("/search", response_model=List[SearchResult])
