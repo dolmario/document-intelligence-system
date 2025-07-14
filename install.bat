@@ -1,106 +1,170 @@
-@echo off
-setlocal EnableDelayedExpansion
-chcp 65001 >nul
+from pathlib import Path
 
+# Inhalt der neuen install.bat mit robuster Docker-Logik und GPU-Prüfung
+install_bat_content = r"""@echo off
+setlocal EnableDelayedExpansion
+
+REM === Document Intelligence System - Windows Installation ===
 echo === Document Intelligence System Installation (Windows) ===
 echo ============================================================
 
-REM Setze Startverzeichnis
+set "ORIGINAL_DIR=%CD%"
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
 echo.
-echo Prüfe docker-compose.yml...
+echo Debug-Information:
+echo - Original-Verzeichnis: %ORIGINAL_DIR%
+echo - Skript-Verzeichnis: %SCRIPT_DIR%
+echo - Aktuelles Verzeichnis: %CD%
+
 if not exist "docker-compose.yml" (
+    echo.
     echo FEHLER: docker-compose.yml nicht gefunden!
-    echo Bitte führe dieses Skript im Projekt-Hauptverzeichnis aus.
+    echo Bitte stelle sicher, dass diese Datei im Projektverzeichnis liegt.
     pause
     exit /b 1
 )
 
-REM === Python prüfen
 echo.
-echo Prüfe Python...
+echo Prüfe Berechtigungen...
+net session >nul 2>&1
+if %errorLevel% neq 0 (
+    echo WARNUNG: Keine Admin-Rechte. Fortfahren...
+) else (
+    echo ✓ Administratorrechte erkannt.
+)
+
+echo.
+echo Erstelle Verzeichnisse...
+mkdir data 2>nul
+mkdir indices\json 2>nul
+mkdir indices\markdown 2>nul
+mkdir logs 2>nul
+mkdir n8n\workflows 2>nul
+type nul > data\.gitkeep 2>nul
+type nul > indices\.gitkeep 2>nul
+type nul > logs\.gitkeep 2>nul
+echo ✓ Verzeichnisse erstellt
+
+echo.
+echo Prüfe Python Installation...
 python --version >nul 2>&1
 if %errorLevel% neq 0 (
-    echo Python nicht gefunden! Bitte installiere Python 3.10+
+    echo FEHLER: Python nicht gefunden!
     pause
     exit /b 1
 )
+for /f "tokens=2" %%v in ('python --version 2^>^&1') do set "PYTHON_VERSION=%%v"
+echo ✓ Python gefunden: %PYTHON_VERSION%
 
-REM === Docker prüfen
 echo.
-echo Prüfe Docker...
+echo Prüfe Docker Installation...
 docker --version >nul 2>&1
 if %errorLevel% neq 0 (
-    echo Docker nicht gefunden! Bitte installiere Docker Desktop
+    echo FEHLER: Docker nicht gefunden!
+    pause
+    exit /b 1
+)
+echo ✓ Docker erkannt
+
+echo.
+echo Prüfe ob Docker läuft...
+docker ps >nul 2>&1
+if %errorLevel% neq 0 (
+    echo FEHLER: Docker läuft nicht!
+    pause
+    exit /b 1
+)
+echo ✓ Docker läuft
+
+echo.
+echo Setup .env Datei...
+if not exist ".env" (
+    if exist ".env.example" (
+        copy ".env.example" ".env" >nul
+        echo ✓ .env erstellt aus .env.example
+    ) else (
+        echo CHROMA_TELEMETRY=false> .env
+        echo ✓ Minimale .env erstellt
+    )
+) else (
+    echo ✓ .env bereits vorhanden
+)
+
+echo.
+echo Python Virtual Environment...
+if not exist "venv" (
+    python -m venv venv
+    if %errorLevel% neq 0 (
+        echo FEHLER: venv konnte nicht erstellt werden.
+        pause
+        exit /b 1
+    )
+    echo ✓ venv erstellt
+)
+call venv\Scripts\activate.bat
+if %errorLevel% neq 0 (
+    echo FEHLER: Konnte venv nicht aktivieren
     pause
     exit /b 1
 )
 
-REM === Verzeichnisse erstellen
 echo.
-echo Erstelle Ordnerstruktur...
-mkdir data >nul 2>&1
-mkdir indices\json >nul 2>&1
-mkdir indices\markdown >nul 2>&1
-mkdir logs >nul 2>&1
-mkdir n8n\workflows >nul 2>&1
-type nul > data\.gitkeep
-type nul > indices\.gitkeep
-type nul > logs\.gitkeep
+echo Installiere pip + dependencies...
+python -m pip install --upgrade pip
+pip install --no-cache-dir -r requirements.txt 2>nul
 
 echo.
-echo Erstelle .env...
-if not exist ".env" (
-    if exist ".env.example" (
-        copy .env.example .env >nul
-        echo .env aus Vorlage erstellt.
-    ) else (
-        echo DATA_PATH=./data > .env
-        echo INDEX_PATH=./indices >> .env
-        echo LOG_PATH=./logs >> .env
-        echo REDIS_URL=redis://redis:6379 >> .env
-        echo .env Datei minimal erstellt.
+echo Installiere Standardpakete (OCR, NLP etc.)...
+pip install redis fastapi uvicorn spacy pytesseract Pillow pdf2image watchdog aiofiles pytest numpy pandas >nul
+python -m spacy download de_core_news_sm >nul
+
+echo ✓ Python-Pakete installiert
+
+REM === GPU-Erkennung ===
+set "COMPOSE_FILE=docker-compose.yml"
+set "PATH=%PATH%;C:\Program Files\NVIDIA Corporation\NVSMI"
+nvidia-smi >nul 2>&1
+if %errorLevel% neq 0 (
+    if exist "docker-compose-cpu.yml" (
+        set "COMPOSE_FILE=docker-compose-cpu.yml"
+        echo [INFO] Keine GPU erkannt – verwende CPU-Setup
     )
 ) else (
-    echo .env Datei bereits vorhanden.
-)
-
-REM === Virtualenv
-echo.
-echo Erstelle virtuelles Python Environment...
-if not exist "venv" (
-    python -m venv venv
-)
-call venv\Scripts\activate.bat
-python -m pip install --upgrade pip
-
-REM === Install requirements
-echo.
-if exist "requirements.txt" (
-    echo Installiere Python-Abhängigkeiten...
-    pip install -r requirements.txt
-) else (
-    echo requirements.txt fehlt – überspringe...
+    echo [INFO] NVIDIA GPU erkannt – verwende Standard-Setup
 )
 
 echo.
-echo Lade Spacy Modell...
-python -m spacy download de_core_news_sm
-
-REM === Docker Compose
-echo.
-echo Starte Docker Compose...
-docker compose down >nul 2>&1
-docker compose up -d
-
-echo.
-echo Warte auf Services...
-timeout /t 15 /nobreak >nul
+echo [9/10] Docker Build vorbereiten...
+docker compose -f %COMPOSE_FILE% build --progress plain
+if %errorLevel% neq 0 (
+    echo FEHLER: Build fehlgeschlagen!
+    pause
+    exit /b 1
+)
 
 echo.
-echo Prüfung abgeschlossen – Dienste gestartet!
-echo Öffne http://localhost:8080 im Browser.
+echo [10/10] Starte Docker-Services...
+docker compose -f %COMPOSE_FILE% up -d
+if %errorLevel% neq 0 (
+    echo FEHLER: Container konnten nicht gestartet werden!
+    pause
+    exit /b 1
+)
+
+echo.
+echo ✓ Installation abgeschlossen!
+echo Zugriff auf:
+echo - N8N:       http://localhost:5678
+echo - OpenWebUI: http://localhost:8080
+echo - SearchAPI: http://localhost:8001
 echo.
 pause
+"""
+
+# Speicherort für install.bat
+output_path = Path("/mnt/data/install.bat")
+output_path.write_text(install_bat_content, encoding="utf-8")
+output_path
+
