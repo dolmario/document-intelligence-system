@@ -1,5 +1,4 @@
 services:
-  # === 1. Redis MUSS ZUERST STARTEN ===
   redis:
     image: redis:7-alpine
     container_name: doc-intel-redis
@@ -17,7 +16,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # === 2. PostgreSQL MIT PASSWORT ===
   postgres:
     image: postgres:16-alpine
     container_name: doc-intel-postgres
@@ -39,7 +37,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # === 3. Watchdog Agent - WARTET AUF REDIS ===
   watchdog:
     build:
       context: .
@@ -61,7 +58,6 @@ services:
       - doc_network
     restart: unless-stopped
 
-  # === 4. OCR Agent - WARTET AUF REDIS ===
   ocr_agent:
     build:
       context: .
@@ -85,7 +81,6 @@ services:
       - doc_network
     restart: unless-stopped
 
-  # === 5. Indexer - WARTET AUF REDIS ===
   indexer:
     build:
       context: .
@@ -111,7 +106,6 @@ services:
       - doc_network
     restart: unless-stopped
 
-  # === 6. Search API - WARTET AUF REDIS UND INDICES ===
   search_api:
     build:
       context: .
@@ -145,7 +139,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # === 7. N8N - WARTET AUF POSTGRES ===
   n8n:
     image: docker.n8n.io/n8nio/n8n
     container_name: doc-intel-n8n
@@ -179,22 +172,25 @@ services:
       - doc_network
     restart: unless-stopped
 
-  # === 8. Ollama (CPU Mode) ===
   ollama:
     image: ollama/ollama:latest
     container_name: doc-intel-ollama
     ports:
       - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
+    runtime: nvidia
     environment:
       OLLAMA_KEEP_ALIVE: 24h
       OLLAMA_HOST: 0.0.0.0
+      OLLAMA_DEBUG: INFO
+      OLLAMA_GPU_OVERHEAD: 0
+      OLLAMA_LLM_LIBRARY: cublas
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ollama_data:/root/.ollama
     networks:
       - doc_network
     restart: unless-stopped
 
-  # === 9. Open WebUI ===
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: doc-intel-webui
@@ -225,3 +221,4 @@ volumes:
   ollama_data:
   open_webui_data:
   postgres_data:
+
