@@ -8,10 +8,15 @@ import aiofiles
 import asyncio
 
 
-# Logger Setup mit Environment-basiertem Path
+# Logger Setup mit korrigiertem Path
 def setup_logger(name: str, log_file: Optional[str] = None) -> logging.Logger:
-    """Erstelle konfigurierten Logger"""
+    """Erstelle konfigurierten Logger - FIXED: Korrekte Pfad-Behandlung"""
     logger = logging.getLogger(name)
+    
+    # Verhindere mehrfache Handler
+    if logger.handlers:
+        return logger
+        
     logger.setLevel(logging.INFO)
 
     formatter = logging.Formatter(
@@ -23,16 +28,28 @@ def setup_logger(name: str, log_file: Optional[str] = None) -> logging.Logger:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # File Handler wenn angegeben
+    # File Handler wenn angegeben - FIXED: Korrekte Pfad-Konstruktion
     if log_file:
         # Use environment variable for log path if available
         log_path = os.getenv('LOG_PATH', './logs')
-        Path(log_path).mkdir(parents=True, exist_ok=True)
+        
+        # FIXED: Entferne doppelte 'logs' im Pfad
+        log_dir = Path(log_path)
+        log_dir.mkdir(parents=True, exist_ok=True)
 
-        full_log_path = Path(log_path) / log_file
-        file_handler = logging.FileHandler(full_log_path)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        # FIXED: Direkte Datei-Konstruktion ohne doppelten logs-Ordner
+        if log_file.startswith('logs/'):
+            log_file = log_file[5:]  # Entferne 'logs/' Prefix
+            
+        full_log_path = log_dir / log_file
+        
+        try:
+            file_handler = logging.FileHandler(full_log_path)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+        except Exception as e:
+            # Fallback: Log nur in Console wenn File-Handler fehlschlägt
+            logger.warning(f"Konnte Log-Datei nicht erstellen: {e}")
 
     return logger
 
