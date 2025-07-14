@@ -23,11 +23,12 @@ services:
       dockerfile: agents/watchdog/Dockerfile
     volumes:
       - ./data:/data:ro
-      - ./logs:/logs
+      - ./logs:/app/logs  # Fixed: Map to /app/logs
     environment:
       - WATCH_PATHS=/data
       - REDIS_URL=redis://redis:6379
       - PYTHONPATH=/app
+      - LOG_PATH=/app/logs
     depends_on:
       - redis
     networks:
@@ -41,11 +42,12 @@ services:
     volumes:
       - ./data:/data:ro
       - ./indices:/indices
-      - ./logs:/logs
+      - ./logs:/app/logs  # Fixed: Map to /app/logs
     environment:
       - REDIS_URL=redis://redis:6379
       - TESSERACT_LANG=deu+eng
       - PYTHONPATH=/app
+      - LOG_PATH=/app/logs
     depends_on:
       - redis
     networks:
@@ -59,13 +61,15 @@ services:
     volumes:
       - ./data:/data:ro
       - ./indices:/indices
-      - ./logs:/logs
+      - ./logs:/app/logs  # Fixed: Map to /app/logs
     environment:
       - REDIS_URL=redis://redis:6379
       - INDEX_FORMAT=markdown_json
       - PII_REMOVAL=strict
       - LANGUAGE=de
       - PYTHONPATH=/app
+      - LOG_PATH=/app/logs
+      - INDEX_PATH=/indices
     depends_on:
       - redis
     networks:
@@ -81,14 +85,15 @@ services:
       - "8001:8001"
     volumes:
       - ./indices:/indices:ro
-      - ./logs:/logs
+      - ./logs:/app/logs  # Fixed: Map to /app/logs
     environment:
       - REDIS_URL=redis://redis:6379
       - OLLAMA_URL=http://ollama:11434
       - PYTHONPATH=/app
+      - LOG_PATH=/app/logs
+      - INDEX_PATH=/indices
     depends_on:
       - redis
-      - ollama
     networks:
       - doc_network
     restart: unless-stopped
@@ -129,6 +134,7 @@ services:
     networks:
       - doc_network
     restart: unless-stopped
+    # GPU support optional - remove if no GPU
 
   # === Open WebUI (Ollama Frontend) ===
   open-webui:
