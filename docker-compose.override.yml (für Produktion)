@@ -1,5 +1,3 @@
-yamlversion: '3.8'
-
 services:
   watchdog:
     restart: always
