@@ -1,6 +1,41 @@
 @echo off
+setlocal EnableDelayedExpansion
+
+REM === Sicherer Start für Installations-Batch ===
+REM Wechsel ins Verzeichnis, in dem das Skript liegt
+cd /d "%~dp0"
+
+REM Sicherheitscheck: verbotene Verzeichnisse
+set "BADFOLDER1=C:\Windows"
+set "BADFOLDER2=C:\Windows\System32"
+set "BADFOLDER3=C:\Program Files"
+set "BADFOLDER4=C:\Program Files (x86)"
+
+set "CURDIR=%cd%"
+
+if /i "%CURDIR%"=="%BADFOLDER1%" (
+    echo FEHLER: Bitte das Skript nicht direkt aus %CURDIR% starten!
+    pause
+    exit /b 1
+)
+if /i "%CURDIR%"=="%BADFOLDER2%" (
+    echo FEHLER: Bitte das Skript nicht direkt aus %CURDIR% starten!
+    pause
+    exit /b 1
+)
+if /i "%CURDIR%"=="%BADFOLDER3%" (
+    echo FEHLER: Bitte das Skript nicht direkt aus %CURDIR% starten!
+    pause
+    exit /b 1
+)
+if /i "%CURDIR%"=="%BADFOLDER4%" (
+    echo FEHLER: Bitte das Skript nicht direkt aus %CURDIR% starten!
+    pause
+    exit /b 1
+)
+
 echo === Document Intelligence System Installation (Windows) ===
-echo =========================================================
+echo ============================================================
 
 :: Check for Admin rights
 net session >nul 2>&1
