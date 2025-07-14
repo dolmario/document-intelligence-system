@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY agents/ocr/ocr_agent.py .
 
 # Create necessary directories
-RUN mkdir -p /data /indices /logs
+RUN mkdir -p /data /indices /app/logs
+
+# Set permissions
+RUN chmod -R 755 /app/logs
 
 CMD ["python", "ocr_agent.py"]
