@@ -8,11 +8,14 @@ services:
       - redis_data:/data
     networks:
       - doc_network
+    # OPUS FIX: Healthcheck hinzugefügt
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   # === Document Processing Agents ===
   watchdog:
@@ -21,14 +24,16 @@ services:
       dockerfile: agents/watchdog/Dockerfile
     volumes:
       - ./data:/data:ro
-      - ./logs:/app/logs  # Fixed: Map to /app/logs
+      - ./logs:/app/logs
     environment:
       - WATCH_PATHS=/data
       - REDIS_URL=redis://redis:6379
       - PYTHONPATH=/app
       - LOG_PATH=/app/logs
+    # OPUS FIX: depends_on mit healthcheck
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
@@ -40,14 +45,18 @@ services:
     volumes:
       - ./data:/data:ro
       - ./indices:/indices
-      - ./logs:/app/logs  # Fixed: Map to /app/logs
+      - ./logs:/app/logs
     environment:
       - REDIS_URL=redis://redis:6379
       - TESSERACT_LANG=deu+eng
       - PYTHONPATH=/app
       - LOG_PATH=/app/logs
+      # OPUS FIX: Environment Variable hinzugefügt
+      - ENABLE_PII_REMOVAL=${ENABLE_PII_REMOVAL:-true}
+    # OPUS FIX: depends_on mit healthcheck
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
@@ -59,7 +68,7 @@ services:
     volumes:
       - ./data:/data:ro
       - ./indices:/indices
-      - ./logs:/app/logs  # Fixed: Map to /app/logs
+      - ./logs:/app/logs
     environment:
       - REDIS_URL=redis://redis:6379
       - INDEX_FORMAT=markdown_json
@@ -68,8 +77,10 @@ services:
       - PYTHONPATH=/app
       - LOG_PATH=/app/logs
       - INDEX_PATH=/indices
+    # OPUS FIX: depends_on mit healthcheck
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
@@ -83,15 +94,17 @@ services:
       - "8001:8001"
     volumes:
       - ./indices:/indices:ro
-      - ./logs:/app/logs  # Fixed: Map to /app/logs
+      - ./logs:/app/logs
     environment:
       - REDIS_URL=redis://redis:6379
       - OLLAMA_URL=http://ollama:11434
       - PYTHONPATH=/app
       - LOG_PATH=/app/logs
       - INDEX_PATH=/indices
+    # OPUS FIX: depends_on mit healthcheck
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
@@ -102,9 +115,16 @@ services:
     ports:
       - "5678:5678"
     environment:
+      # OPUS FIX: PostgreSQL Integration
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-document_intelligence}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-docintell}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-docintell123}
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=admin
-      - N8N_BASIC_AUTH_PASSWORD=changeme
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-changeme}
       - N8N_ENCRYPTION_KEY=n8n-encryption-key
       - N8N_HOST=localhost
       - N8N_PORT=5678
@@ -115,6 +135,10 @@ services:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows
       - ./data:/data
+    # OPUS FIX: depends_on PostgreSQL
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
@@ -132,7 +156,6 @@ services:
     networks:
       - doc_network
     restart: unless-stopped
-    # GPU support optional - remove if no GPU
     deploy:
       resources:
         reservations:
@@ -149,7 +172,7 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
       - WEBUI_SECRET_KEY=secret-key-change-me
-      - WEBUI_AUTH=false  # Für Entwicklung, später aktivieren
+      - WEBUI_AUTH=false
       - ENABLE_SIGNUP=true
       - DEFAULT_MODELS=mistral,llama3,phi
     volumes:
@@ -164,15 +187,22 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=docintell
-      - POSTGRES_PASSWORD=docintell123
-      - POSTGRES_DB=document_intelligence
+      # OPUS FIX: Umgebungsvariablen mit Fallbacks
+      - POSTGRES_USER=${POSTGRES_USER:-docintell}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-docintell123}
+      - POSTGRES_DB=${POSTGRES_DB:-document_intelligence}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - doc_network
+    # OPUS FIX: PostgreSQL Healthcheck
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docintell"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 networks:
