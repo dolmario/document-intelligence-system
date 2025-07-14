@@ -7,13 +7,14 @@ from pathlib import Path
 import redis.asyncio as redis
 from typing import Optional, Dict, Any
 import logging
-from datetime import datetime  # ADDED
+from datetime import datetime
 
 from core.utils import setup_logger, config
 from core.models import ProcessingTask
 from core.privacy import PrivacyManager
 
-logger = setup_logger('ocr_agent', 'logs/ocr.log')
+# FIXED: Korrigierter Logger-Aufruf ohne doppelten logs-Pfad
+logger = setup_logger('ocr_agent', 'ocr.log')
 
 class OCRAgent:
     def __init__(self, redis_url: str):
@@ -22,10 +23,62 @@ class OCRAgent:
         self.privacy_manager = PrivacyManager()
         self.running = True
         
-    async def connect(self):
+    async def extract_docx(self, filepath: Path) -> str:
+        """Extrahiere Text aus DOCX-Datei"""
+        try:
+            from docx import Document
+            doc = Document(filepath)
+            
+            text_parts = []
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text_parts.append(paragraph.text)
+            
+            return '\n'.join(text_parts)
+            
+        except Exception as e:
+            logger.error(f"DOCX Extraktion Fehler: {str(e)}")
+            return ""
+    
+    async def run(self):
+        """Hauptloop"""
+        await self.connect()
+        logger.info("OCR Agent gestartet")
+        
+        try:
+            await self.process_queue()
+        except KeyboardInterrupt:
+            logger.info("OCR Agent wird beendet")
+            self.running = False
+        finally:
+            if self.redis_client:
+                await self.redis_client.close()
+
+def main():
+    import os
+    
+    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
+    
+    agent = OCRAgent(redis_url)
+    
+    try:
+        asyncio.run(agent.run())
+    except KeyboardInterrupt:
+        logger.info("OCR Agent durch Benutzer beendet")
+    except Exception as e:
+        logger.error(f"OCR Agent Fehler: {str(e)}")
+
+if __name__ == "__main__":
+    main() connect(self):
         """Verbinde mit Redis"""
-        self.redis_client = await redis.from_url(self.redis_url)
-        logger.info("OCR Agent verbunden mit Redis")
+        try:
+            self.redis_client = await redis.from_url(self.redis_url)
+            # Test der Verbindung
+            await self.redis_client.ping()
+            logger.info("OCR Agent verbunden mit Redis")
+        except Exception as e:
+            logger.error(f"Redis-Verbindung fehlgeschlagen: {str(e)}")
+            raise
     
     async def process_queue(self):
         """Verarbeite OCR-Queue"""
@@ -41,6 +94,12 @@ class OCRAgent:
                     if task['task_type'] == 'ocr':
                         await self.process_ocr_task(task)
                         
+            except asyncio.TimeoutError:
+                # Normal bei timeout - einfach weiter
+                continue
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON Decode Fehler: {str(e)}")
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Fehler in process_queue: {str(e)}")
                 await asyncio.sleep(5)
@@ -50,6 +109,11 @@ class OCRAgent:
         try:
             filepath = Path(task['file_path'])
             logger.info(f"Starte OCR für: {filepath}")
+            
+            # Prüfe ob Datei existiert
+            if not filepath.exists():
+                logger.warning(f"Datei existiert nicht: {filepath}")
+                return
             
             # OCR durchführen
             text = await self.extract_text(filepath)
@@ -64,12 +128,14 @@ class OCRAgent:
                     'task_id': task['task_id'],
                     'file_path': str(filepath),
                     'extracted_text': text,
-                    'ocr_completed_at': datetime.now().isoformat()
+                    'ocr_completed_at': datetime.now().isoformat(),
+                    'text_length': len(text),
+                    'processing_time': task.get('processing_time', 0)
                 }
                 
                 # An Indexer-Queue senden
                 await self.redis_client.lpush('indexing_queue', json.dumps(result))
-                logger.info(f"OCR abgeschlossen für: {filepath}")
+                logger.info(f"OCR abgeschlossen für: {filepath} ({len(text)} Zeichen)")
             else:
                 logger.warning(f"Kein Text extrahiert aus: {filepath}")
                 
@@ -93,6 +159,8 @@ class OCRAgent:
                 return await self.ocr_image(filepath)
             elif ext in ['.txt', '.md']:
                 return filepath.read_text(encoding='utf-8')
+            elif ext == '.docx':
+                return await self.extract_docx(filepath)
             else:
                 logger.warning(f"Nicht unterstütztes Format: {ext}")
                 return None
@@ -104,19 +172,30 @@ class OCRAgent:
     async def ocr_pdf(self, filepath: Path) -> str:
         """OCR für PDF"""
         try:
-            # PDF zu Bildern konvertieren
-            images = pdf2image.convert_from_path(filepath, dpi=300)
+            # PDF zu Bildern konvertieren - mit besseren Einstellungen
+            images = pdf2image.convert_from_path(
+                filepath, 
+                dpi=300,
+                first_page=1,
+                last_page=None,
+                fmt='png'
+            )
             
             texts = []
             for i, image in enumerate(images):
                 logger.debug(f"Verarbeite Seite {i+1} von {len(images)}")
+                
+                # OCR mit besseren Parametern
                 text = pytesseract.image_to_string(
                     image, 
-                    lang=config.tesseract_lang
+                    lang=config.tesseract_lang,
+                    config='--oem 3 --psm 6'  # Bessere OCR-Parameter
                 )
-                texts.append(text)
+                
+                if text.strip():  # Nur nicht-leere Seiten hinzufügen
+                    texts.append(f"--- SEITE {i+1} ---\n{text}")
             
-            return '\n\n--- SEITE ---\n\n'.join(texts)
+            return '\n\n'.join(texts)
             
         except Exception as e:
             logger.error(f"PDF OCR Fehler: {str(e)}")
@@ -127,12 +206,16 @@ class OCRAgent:
         try:
             image = Image.open(filepath)
             
-            # Preprocessing für bessere OCR-Ergebnisse
-            # (könnte erweitert werden mit mehr Bildverarbeitung)
+            # Bildvorverarbeitung für bessere OCR-Ergebnisse
+            # Konvertiere zu RGB falls nötig
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
             
+            # OCR mit optimierten Parametern
             text = pytesseract.image_to_string(
                 image,
-                lang=config.tesseract_lang
+                lang=config.tesseract_lang,
+                config='--oem 3 --psm 6'
             )
             
             return text
@@ -141,25 +224,4 @@ class OCRAgent:
             logger.error(f"Bild OCR Fehler: {str(e)}")
             raise
     
-    async def run(self):
-        """Hauptloop"""
-        await self.connect()
-        logger.info("OCR Agent gestartet")
-        
-        try:
-            await self.process_queue()
-        except KeyboardInterrupt:
-            logger.info("OCR Agent wird beendet")
-            self.running = False
-
-def main():
-    import os
-    from datetime import datetime
-    
-    redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
-    
-    agent = OCRAgent(redis_url)
-    asyncio.run(agent.run())
-
-if __name__ == "__main__":
-    main()
+    async def
