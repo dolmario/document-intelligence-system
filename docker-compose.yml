@@ -1,27 +1,50 @@
 services:
-  # === Core Services ===
+  # === 1. Redis MUSS ZUERST STARTEN ===
   redis:
     image: redis:7-alpine
+    container_name: doc-intel-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
       - doc_network
-    # OPUS FIX: Healthcheck hinzugefügt
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  # === 2. PostgreSQL MIT PASSWORT ===
+  postgres:
+    image: postgres:16-alpine
+    container_name: doc-intel-postgres
+    environment:
+      - POSTGRES_USER=docintell
+      - POSTGRES_PASSWORD=docintell123  # KRITISCH: MUSS GESETZT SEIN!
+      - POSTGRES_DB=document_intelligence
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - doc_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docintell -d document_intelligence"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
       start_period: 10s
     restart: unless-stopped
 
-  # === Document Processing Agents ===
+  # === 3. Watchdog Agent - WARTET AUF REDIS ===
   watchdog:
     build: 
       context: .
       dockerfile: agents/watchdog/Dockerfile
+    container_name: doc-intel-watchdog
     volumes:
       - ./data:/data:ro
       - ./logs:/app/logs
@@ -30,18 +53,26 @@ services:
       - REDIS_URL=redis://redis:6379
       - PYTHONPATH=/app
       - LOG_PATH=/app/logs
-    # OPUS FIX: depends_on mit healthcheck
+      - PYTHONUNBUFFERED=1
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
+    # Retry-Mechanismus
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
 
+  # === 4. OCR Agent - WARTET AUF REDIS ===
   ocr_agent:
     build: 
       context: .
       dockerfile: agents/ocr/Dockerfile
+    container_name: doc-intel-ocr
     volumes:
       - ./data:/data:ro
       - ./indices:/indices
@@ -51,20 +82,26 @@ services:
       - TESSERACT_LANG=deu+eng
       - PYTHONPATH=/app
       - LOG_PATH=/app/logs
-      # OPUS FIX: Environment Variable hinzugefügt
-      - ENABLE_PII_REMOVAL=${ENABLE_PII_REMOVAL:-true}
-    # OPUS FIX: depends_on mit healthcheck
+      - ENABLE_PII_REMOVAL=true
+      - PYTHONUNBUFFERED=1
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
 
+  # === 5. Indexer - WARTET AUF REDIS ===
   indexer:
     build: 
       context: .
       dockerfile: agents/indexer/Dockerfile
+    container_name: doc-intel-indexer
     volumes:
       - ./data:/data:ro
       - ./indices:/indices
@@ -77,19 +114,25 @@ services:
       - PYTHONPATH=/app
       - LOG_PATH=/app/logs
       - INDEX_PATH=/indices
-    # OPUS FIX: depends_on mit healthcheck
+      - PYTHONUNBUFFERED=1
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
 
-  # === API Services ===
+  # === 6. Search API - WARTET AUF REDIS UND INDICES ===
   search_api:
     build:
       context: .
       dockerfile: services/search/Dockerfile
+    container_name: doc-intel-search-api
     ports:
       - "8001:8001"
     volumes:
@@ -101,41 +144,52 @@ services:
       - PYTHONPATH=/app
       - LOG_PATH=/app/logs
       - INDEX_PATH=/indices
-    # OPUS FIX: depends_on mit healthcheck
+      - CORS_ALLOW_ORIGIN=http://localhost:8080,http://localhost:5678
+      - USER_AGENT=DocumentIntelligenceSystem/1.0
+      - PYTHONUNBUFFERED=1
     depends_on:
       redis:
         condition: service_healthy
+      indexer:
+        condition: service_started
     networks:
       - doc_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # === N8N Workflow Automation ===
+  # === 7. N8N - WARTET AUF POSTGRES ===
   n8n:
     image: docker.n8n.io/n8nio/n8n
+    container_name: doc-intel-n8n
     ports:
       - "5678:5678"
     environment:
-      # OPUS FIX: PostgreSQL Integration
+      # Database Konfiguration
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=postgres
       - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-document_intelligence}
-      - DB_POSTGRESDB_USER=${POSTGRES_USER:-docintell}
-      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-docintell123}
+      - DB_POSTGRESDB_DATABASE=document_intelligence
+      - DB_POSTGRESDB_USER=docintell
+      - DB_POSTGRESDB_PASSWORD=docintell123
+      # N8N Konfiguration
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=changeme
       - N8N_ENCRYPTION_KEY=n8n-encryption-key
-      - N8N_HOST=localhost
+      - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
+      - WEBHOOK_URL=http://n8n:5678/
       - GENERIC_TIMEZONE=Europe/Berlin
+      - N8N_RUNNERS_ENABLED=true
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows
       - ./data:/data
-    # OPUS FIX: depends_on PostgreSQL
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,9 +197,10 @@ services:
       - doc_network
     restart: unless-stopped
 
-  # === Ollama AI Service ===
+  # === 8. Ollama (CPU Mode) ===
   ollama:
     image: ollama/ollama:latest
+    container_name: doc-intel-ollama
     ports:
       - "11434:11434"
     volumes:
@@ -156,17 +211,11 @@ services:
     networks:
       - doc_network
     restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
-  # === Open WebUI (Ollama Frontend) ===
+  # === 9. Open WebUI ===
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
+    container_name: doc-intel-webui
     ports:
       - "8080:8080"
     environment:
@@ -183,28 +232,6 @@ services:
       - doc_network
     restart: unless-stopped
 
-  # === PostgreSQL for advanced features ===
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      # OPUS FIX: Umgebungsvariablen mit Fallbacks
-      - POSTGRES_USER=${POSTGRES_USER:-docintell}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-docintell123}
-      - POSTGRES_DB=${POSTGRES_DB:-document_intelligence}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - doc_network
-    # OPUS FIX: PostgreSQL Healthcheck
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U docintell"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
 networks:
   doc_network:
     driver: bridge
@@ -215,3 +242,4 @@ volumes:
   ollama_data:
   open_webui_data:
   postgres_data:
+
