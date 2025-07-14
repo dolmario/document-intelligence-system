@@ -1,0 +1,28 @@
+name: Build Guard Validator
+
+description: >
+  Läuft bei jedem Push oder Pull Request und prüft:
+  - docker-compose.yml valide?
+  - Sind Container-Build-Dateien vollständig?
+  - .dockerignore ist konsistent?
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+
+jobs:
+  validate-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Docker Compose
+        run: sudo apt-get install -y docker-compose
+
+      - name: Make build-guard executable
+        run: chmod +x ./build-guard.sh
+
+      - name: Run Build Guard Check
+        run: ./build-guard.sh
