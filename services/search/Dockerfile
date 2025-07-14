@@ -4,7 +4,7 @@ WORKDIR /app
 
 # System dependencies
 RUN apt-get update && apt-get install -y \
-    gcc g++ \
+    gcc g++ curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy core modules first
@@ -19,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -m spacy download de_core_news_sm
 
 # Create directories
-RUN mkdir -p /indices /logs
+RUN mkdir -p /indices /app/logs
+
+# Set permissions
+RUN chmod -R 755 /app/logs
 
 CMD ["python", "-m", "uvicorn", "services.search.api:app", "--host", "0.0.0.0", "--port", "8001"]
