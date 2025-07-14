@@ -21,6 +21,9 @@ RUN python -m spacy download de_core_news_sm
 COPY agents/indexer /app/agents/indexer
 
 # Create directories
-RUN mkdir -p /indices /logs
+RUN mkdir -p /indices /app/logs
+
+# Set permissions
+RUN chmod -R 755 /app/logs /indices
 
 CMD ["python", "-m", "agents.indexer.indexer_agent"]
