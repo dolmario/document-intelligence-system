@@ -1,6 +1,5 @@
 FROM python:3.11-slim
 
-
 WORKDIR /app
 
 # System-Dependencies
@@ -19,6 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY agents/watchdog/watchdog_agent.py .
 
 # Create necessary directories
-RUN mkdir -p /data /logs
+RUN mkdir -p /data /app/logs
+
+# Set permissions
+RUN chmod -R 755 /app/logs
 
 CMD ["python", "watchdog_agent.py"]
