@@ -1,0 +1,176 @@
+version: '3.8'
+
+services:
+  # === Core Services ===
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - doc_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # === Document Processing Agents ===
+  watchdog:
+    build: 
+      context: .
+      dockerfile: agents/watchdog/Dockerfile
+    volumes:
+      - ./data:/data:ro
+      - ./logs:/logs
+    environment:
+      - WATCH_PATHS=/data
+      - REDIS_URL=redis://redis:6379
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  ocr_agent:
+    build: 
+      context: .
+      dockerfile: agents/ocr/Dockerfile
+    volumes:
+      - ./data:/data:ro
+      - ./indices:/indices
+      - ./logs:/logs
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - TESSERACT_LANG=deu+eng
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  indexer:
+    build: 
+      context: .
+      dockerfile: agents/indexer/Dockerfile
+    volumes:
+      - ./data:/data:ro
+      - ./indices:/indices
+      - ./logs:/logs
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - INDEX_FORMAT=markdown_json
+      - PII_REMOVAL=strict
+      - LANGUAGE=de
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  # === API Services ===
+  search_api:
+    build:
+      context: .
+      dockerfile: services/search/Dockerfile
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./indices:/indices:ro
+      - ./logs:/logs
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - OLLAMA_URL=http://ollama:11434
+      - PYTHONPATH=/app
+    depends_on:
+      - redis
+      - ollama
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  # === N8N Workflow Automation ===
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=changeme
+      - N8N_ENCRYPTION_KEY=n8n-encryption-key
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Europe/Berlin
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+      - ./data:/data
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  # === Ollama AI Service ===
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  # === Open WebUI (Ollama Frontend) ===
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=secret-key-change-me
+      - WEBUI_AUTH=false  # Für Entwicklung, später aktivieren
+      - ENABLE_SIGNUP=true
+      - DEFAULT_MODELS=mistral,llama3,phi
+    volumes:
+      - open_webui_data:/app/backend/data
+    depends_on:
+      - ollama
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  # === PostgreSQL for advanced features ===
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=docintell
+      - POSTGRES_PASSWORD=docintell123
+      - POSTGRES_DB=document_intelligence
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+networks:
+  doc_network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  n8n_data:
+  ollama_data:
+  open_webui_data:
+  postgres_data:
