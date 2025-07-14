@@ -1,17 +1,22 @@
 {
-  "name": "Document Intelligence Pipeline",
+  "name": "Document Intelligence Webhook",
   "nodes": [
     {
       "parameters": {
         "path": "doc-webhook",
         "responseMode": "onReceived",
-        "options": {}
+        "httpMethod": "POST",
+        "options": {
+          "allowedOrigins": "*",
+          "rawBody": false
+        }
       },
       "name": "Document Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [250, 300],
-      "webhookId": "doc-intelligence-webhook"
+      "webhookId": "doc-intelligence-webhook",
+      "id": "webhook-node-001"
     },
     {
       "parameters": {
@@ -28,70 +33,81 @@
       "name": "Check Event Type",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [450, 300]
+      "position": [450, 300],
+      "id": "condition-node-001"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "received"
+            },
+            {
+              "name": "event",
+              "value": "={{$json[\"event\"]}}"
+            },
+            {
+              "name": "file",
+              "value": "={{$json[\"file\"]}}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{new Date().toISOString()}}"
+            }
+          ]
+        }
+      },
+      "name": "Format Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "id": "format-node-001"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://search_api:8001/search",
+        "url": "http://search_api:8001/webhook/process",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
             {
-              "name": "query",
-              "value": "={{$json[\"query\"]}}"
+              "name": "event",
+              "value": "={{$json[\"event\"]}}"
             },
             {
-              "name": "limit", 
-              "value": "={{$json[\"limit\"] || 5}}"
+              "name": "file_path",
+              "value": "={{$json[\"file\"]}}"
+            },
+            {
+              "name": "source",
+              "value": "n8n_webhook"
             }
           ]
         },
-        "options": {}
+        "options": {
+          "timeout": 30000
+        }
       },
-      "name": "Search Documents",
+      "name": "Forward to Search API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 3,
-      "position": [650, 200]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://ollama:11434/api/generate",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "model",
-              "value": "mistral"
-            },
-            {
-              "name": "prompt",
-              "value": "Analysiere diese Suchergebnisse: {{JSON.stringify($json)}}"
-            },
-            {
-              "name": "stream",
-              "value": false
-            }
-          ]
-        },
-        "options": {}
-      },
-      "name": "AI Analysis",
-      "type": "n8n-nodes-base.httpRequest", 
-      "typeVersion": 3,
-      "position": [850, 200]
+      "position": [850, 200],
+      "id": "forward-node-001"
     },
     {
       "parameters": {
         "operation": "set",
-        "key": "search_result_{{$json[\"search_id\"] || 'default'}}",
-        "value": "={{JSON.stringify($json)}}"
+        "key": "webhook_event_{{$json[\"event\"]}}_{{new Date().getTime()}}",
+        "value": "={{JSON.stringify($json)}}",
+        "ttl": 3600
       },
-      "name": "Cache Results",
+      "name": "Cache Event",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1050, 200]
+      "position": [850, 400],
+      "id": "cache-node-001"
     }
   ],
   "connections": {
@@ -110,29 +126,19 @@
       "main": [
         [
           {
-            "node": "Search Documents", 
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Forward to Search API",
             "type": "main",
             "index": 0
           }
-        ]
-      ]
-    },
-    "Search Documents": {
-      "main": [
+        ],
         [
           {
-            "node": "AI Analysis",
-            "type": "main", 
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "AI Analysis": {
-      "main": [
-        [
-          {
-            "node": "Cache Results",
+            "node": "Cache Event",
             "type": "main",
             "index": 0
           }
@@ -141,6 +147,12 @@
     }
   },
   "active": true,
-  "settings": {},
-  "versionId": "1"
+  "settings": {
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "2",
+  "meta": {
+    "instanceId": "doc-intelligence-system"
+  }
 }
