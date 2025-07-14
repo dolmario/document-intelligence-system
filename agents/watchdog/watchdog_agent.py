@@ -12,7 +12,7 @@ import logging
 from core.utils import setup_logger, config, get_file_extension
 from core.models import ProcessingTask
 
-logger = setup_logger('watchdog_agent', 'logs/watchdog.log')
+logger = setup_logger('watchdog_agent', 'watchdog.log')
 
 class DocumentWatchdog(FileSystemEventHandler):
     """Überwacht Dateisystem auf neue/geänderte Dokumente"""
