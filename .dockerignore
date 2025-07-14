@@ -1,0 +1,36 @@
+# Ignore Python cache
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# VS Code, PyCharm etc.
+.vscode/
+.idea/
+
+# Environment
+.env
+*.env
+venv/
+venv*/ 
+.env.*
+.DS_Store
+
+# Logs, indices & data
+logs/
+indices/
+data/
+*.log
+
+# Tests
+htmlcov/
+.coverage
+pytest_cache/
+tests/__pycache__/
+
+# GitHub Actions Artifacts
+*.sarif
+coverage.xml
