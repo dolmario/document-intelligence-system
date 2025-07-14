@@ -1,37 +1,41 @@
 name: Build Guard
 
 on:
-  pull_request:
-    branches: [main, develop]
   push:
+    branches: [main, develop]
+  pull_request:
     branches: [main, develop]
 
 jobs:
-  validate:
-    name: Validate Docker & Build Setup
+  validate-docker:
+    name: Validate Docker Setup
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v3
 
-      - name: Check docker-compose version key
-        run: |
-          if grep -q "^version:" docker-compose.yml; then
-            echo "⚠️ Veraltetes 'version:' Feld in docker-compose.yml gefunden – bitte entfernen!"
-            exit 1
-          fi
+    - name: Check docker-compose.yml
+      run: |
+        echo "🔍 Prüfe docker-compose.yml auf Syntaxfehler..."
+        docker compose config -q || (echo "❌ docker-compose.yml ungültig!" && exit 1)
 
-      - name: Check for .dockerignore
-        run: |
-          if [ ! -f .dockerignore ]; then
-            echo "❌ .dockerignore fehlt – bitte hinzufügen!"
-            exit 1
-          fi
+    - name: Check .dockerignore
+      run: |
+        echo "🔍 Prüfe .dockerignore ..."
+        if [ ! -f .dockerignore ]; then
+          echo "❌ .dockerignore fehlt – bitte hinzufügen!"
+          exit 1
+        else
+          echo "✅ .dockerignore vorhanden"
+        fi
 
-      - name: Dry-run build all services
-        run: |
-          docker compose convert > /dev/null || (echo "❌ docker-compose.yml ungültig!" && exit 1)
-          docker compose build --dry-run || (echo "❌ Build-Fehler!" && exit 1)
-        env:
-          COMPOSE_DRY_RUN: true
+    - name: Liste der zu bauenden Services
+      run: |
+        echo "🔍 Docker-Build-Konfiguration prüfen..."
+        docker compose config | grep 'build:' || echo "⚠️ Keine Services mit Build-Kontext"
+
+    - name: Baue alle Build-Services (testweise)
+      run: |
+        echo "🔧 Testweise Build starten..."
+        docker compose build --progress plain --parallel || (echo "❌ Build fehlgeschlagen!" && exit 1)
