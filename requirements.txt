@@ -16,14 +16,18 @@ pypdfium2==4.18.0
 spacy==3.7.2
 sentence-transformers==2.2.2
 transformers==4.35.2
+# FIXED: Downgrade PyTorch für Kompatibilität
 torch==2.1.0
+torchvision==0.16.0
+torchaudio==2.1.0
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0
 
 # Vector Database
 chromadb==0.4.18
 qdrant-client==1.7.0
-protobuf==3.20.3  # Fix für ChromaDB
+# FIXED: Spezifische protobuf Version für ChromaDB
+protobuf==3.20.3
 
 # Data Processing
 numpy==1.24.3
@@ -55,8 +59,15 @@ mypy==1.7.1
 isort==5.13.2
 pre-commit==3.5.0
 
-# Fix für sentence-transformers + spacy
+# FIXED: Kompatible HuggingFace Hub Version
 huggingface_hub==0.19.0
 
-# Optional GPU support
-# torch-cuda (wird über pip installiert, siehe Installationsanleitung)
+# FIXED: Langchain Community für korrekte Abhängigkeiten
+langchain-community==0.0.38
+langchain-core==0.1.52
+
+# Optional GPU support (nur bei GPU-System installieren)
+# Für CUDA 11.8:
+# torch==2.1.0+cu118 -f https://download.pytorch.org/whl/torch_stable.html
+# torchvision==0.16.0+cu118 -f https://download.pytorch.org/whl/torch_stable.html
+# torchaudio==2.1.0+cu118 -f https://download.pytorch.org/whl/torch_stable.html
