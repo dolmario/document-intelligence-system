@@ -321,5 +321,3 @@ echo   • GitHub Issues: https://github.com/[USERNAME]/document-intelligence-sy
 echo.
 
 pause
-
-pause
