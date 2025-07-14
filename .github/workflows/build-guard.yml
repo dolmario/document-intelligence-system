@@ -1,53 +1,37 @@
-#!/bin/bash
+name: Build Guard
 
-# === Build Guard Script ===
-# Sicherstellen, dass alle Docker- und Compose-Komponenten baubar und korrekt sind
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
 
-set -e
+jobs:
+  validate:
+    name: Validate Docker & Build Setup
+    runs-on: ubuntu-latest
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
 
-log() {
-  echo -e "$1$2${NC}"
-}
+      - name: Check docker-compose version key
+        run: |
+          if grep -q "^version:" docker-compose.yml; then
+            echo "⚠️ Veraltetes 'version:' Feld in docker-compose.yml gefunden – bitte entfernen!"
+            exit 1
+          fi
 
-log "$GREEN" "[1/5] Prüfe docker-compose.yml ..."
-docker compose config > /dev/null || {
-  log "$RED" "Fehler in docker-compose.yml"
-  exit 1
-}
+      - name: Check for .dockerignore
+        run: |
+          if [ ! -f .dockerignore ]; then
+            echo "❌ .dockerignore fehlt – bitte hinzufügen!"
+            exit 1
+          fi
 
-log "$GREEN" "[2/5] Prüfe auf .dockerignore ..."
-if [ ! -f .dockerignore ]; then
-  log "$YELLOW" ".dockerignore fehlt - sollte erstellt werden."
-else
-  log "$GREEN" ".dockerignore gefunden."
-fi
-
-log "$GREEN" "[3/5] Prüfe Dockerfiles in agents/..."
-MISSING=0
-for AGENT in agents/*; do
-  if [ -d "$AGENT" ]; then
-    if [ ! -f "$AGENT/Dockerfile" ]; then
-      log "$YELLOW" "Fehlender Dockerfile in $AGENT"
-      MISSING=1
-    fi
-  fi
-
-done
-if [ $MISSING -eq 1 ]; then
-  log "$RED" "Mindestens ein Agent hat keinen Dockerfile."
-  exit 1
-fi
-
-log "$GREEN" "[4/5] Testweise Build-Check aller Services ..."
-docker compose build --dry-run || {
-  log "$RED" "Build-Vorprüfung fehlgeschlagen."
-  exit 1
-}
-
-log "$GREEN" "[5/5] OK - Alles bereit zum Build 🚀"
-exit 0
+      - name: Dry-run build all services
+        run: |
+          docker compose convert > /dev/null || (echo "❌ docker-compose.yml ungültig!" && exit 1)
+          docker compose build --dry-run || (echo "❌ Build-Fehler!" && exit 1)
+        env:
+          COMPOSE_DRY_RUN: true
