@@ -1,28 +1,53 @@
-name: Build Guard Validator
+#!/bin/bash
 
-description: >
-  Läuft bei jedem Push oder Pull Request und prüft:
-  - docker-compose.yml valide?
-  - Sind Container-Build-Dateien vollständig?
-  - .dockerignore ist konsistent?
+# === Build Guard Script ===
+# Sicherstellen, dass alle Docker- und Compose-Komponenten baubar und korrekt sind
 
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
+set -e
 
-jobs:
-  validate-build:
-    runs-on: ubuntu-latest
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-    steps:
-      - uses: actions/checkout@v3
+log() {
+  echo -e "$1$2${NC}"
+}
 
-      - name: Install Docker Compose
-        run: sudo apt-get install -y docker-compose
+log "$GREEN" "[1/5] Prüfe docker-compose.yml ..."
+docker compose config > /dev/null || {
+  log "$RED" "Fehler in docker-compose.yml"
+  exit 1
+}
 
-      - name: Make build-guard executable
-        run: chmod +x ./build-guard.sh
+log "$GREEN" "[2/5] Prüfe auf .dockerignore ..."
+if [ ! -f .dockerignore ]; then
+  log "$YELLOW" ".dockerignore fehlt - sollte erstellt werden."
+else
+  log "$GREEN" ".dockerignore gefunden."
+fi
 
-      - name: Run Build Guard Check
-        run: ./build-guard.sh
+log "$GREEN" "[3/5] Prüfe Dockerfiles in agents/..."
+MISSING=0
+for AGENT in agents/*; do
+  if [ -d "$AGENT" ]; then
+    if [ ! -f "$AGENT/Dockerfile" ]; then
+      log "$YELLOW" "Fehlender Dockerfile in $AGENT"
+      MISSING=1
+    fi
+  fi
+
+done
+if [ $MISSING -eq 1 ]; then
+  log "$RED" "Mindestens ein Agent hat keinen Dockerfile."
+  exit 1
+fi
+
+log "$GREEN" "[4/5] Testweise Build-Check aller Services ..."
+docker compose build --dry-run || {
+  log "$RED" "Build-Vorprüfung fehlgeschlagen."
+  exit 1
+}
+
+log "$GREEN" "[5/5] OK - Alles bereit zum Build 🚀"
+exit 0
