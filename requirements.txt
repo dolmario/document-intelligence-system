@@ -1,103 +1,55 @@
-# === KORRIGIERTE REQUIREMENTS.TXT ===
-# Basierend auf Repository-Analyse und Kompatibilitätsprüfung
-# Getestet mit Python 3.11, kompatibel mit Docker Services
+# Document Intelligence System Dependencies
+# Tested with Python 3.11, optimized for Docker deployment
 
-# === CORE FRAMEWORK ===
+# Core Framework
 fastapi==0.104.1
 uvicorn==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 python-dotenv==1.0.0
 
-# === REDIS & ASYNC ===
+# Redis & Async Operations
 redis==5.0.1
-aioredis==2.0.1
 aiofiles==23.2.1
 
-# === OCR & DOCUMENT PROCESSING ===
+# Document Processing & OCR
 pytesseract==0.3.10
 Pillow==10.1.0
 pdf2image==1.16.3
 python-docx==1.1.0
 pypdf==3.17.1
 
-# === ML/AI - KOMPATIBLE VERSIONEN ===
-# PyTorch: Stabile Version ohne grpcio Konflikte
+# Machine Learning - Stable Versions
 torch==2.1.0
 torchvision==0.16.0
 torchaudio==2.1.0
-
-# Transformers: Kompatibel mit torch 2.1.0
 transformers==4.35.2
-
-# HuggingFace Hub: Kompatible Version
 huggingface_hub==0.19.0
 
-# Sentence Transformers: ALTERNATIVE ohne grpcio-tools
-# REMOVED: sentence-transformers==2.2.2  # Ursache des grpcio-tools Problems
-# ALTERNATIVE: Installiere manuell mit --no-deps falls benötigt
-
-# === NLP ===
+# Natural Language Processing
 spacy==3.7.2
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.23.0
 
-# === DATA PROCESSING ===
+# Data Processing
 numpy==1.24.3
 pandas==2.0.3
 scikit-learn==1.3.2
 
-# === VECTOR DATABASE ===
-# REMOVED: chromadb==0.4.18  # Benötigt grpcio-tools
+# Vector Database
 qdrant-client==1.7.0
 
-# Protobuf: Stabile Version ohne Konflikte
+# System Utilities
+watchdog==3.0.0
 protobuf==3.20.3
 
-# === FILE MONITORING ===
-watchdog==3.0.0
-
-# === HTTP CLIENTS ===
+# HTTP & API
 requests==2.31.0
 httpx==0.25.2
 python-multipart==0.0.6
 
-# === TESTING ===
+# Development & Testing
 pytest==7.4.3
 pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 pytest-mock==3.12.0
-
-# === DEVELOPMENT ===
-black==23.12.0
-flake8==6.1.0
-mypy==1.7.1
-isort==5.13.2
-
-# === ZUSÄTZLICHE ABHÄNGIGKEITEN FÜR DOCKER SERVICES ===
-# Diese sind bereits in den Docker Containern verfügbar:
-# - N8N: läuft in eigenem Container
-# - Ollama: läuft in eigenem Container  
-# - Open WebUI: läuft in eigenem Container
-# - Redis: läuft in eigenem Container
-# - PostgreSQL: läuft in eigenem Container
-
-# === OPTIONALE ERWEITERUNGEN ===
-# Falls sentence-transformers später benötigt wird:
-# pip install --no-deps sentence-transformers
-# pip install torch transformers tokenizers numpy
-
-# === DOCKER SERVICE VERSIONEN (für Referenz) ===
-# Diese werden in docker-compose.yml definiert:
-# - redis:7-alpine
-# - postgres:16-alpine  
-# - docker.n8n.io/n8nio/n8n:latest
-# - ghcr.io/open-webui/open-webui:main
-# - ollama/ollama:latest
-
-# === BEKANNTE PROBLEME VERMIEDEN ===
-# ❌ sentence-transformers: Benötigt grpcio-tools (Kompilierung)
-# ❌ chromadb: Schwere Dependencies + grpcio
-# ❌ langchain-community: Dependency-Konflikte
-# ❌ grpcio-tools: Kompilierungs-Probleme auf Windows
-# ❌ torch > 2.1.0: Neuere Versionen haben Breaking Changes
