@@ -1,117 +1,55 @@
 {
-  "name": "Universal Document Intelligence Intake",
+  "name": "Document Processing with File Watcher",
   "nodes": [
     {
       "parameters": {
-        "events": [
-          "file:created",
-          "file:updated"
-        ],
-        "additionalFields": {}
-      },
-      "name": "Google Drive Trigger",
-      "type": "n8n-nodes-base.googleDriveTrigger",
-      "typeVersion": 1,
-      "position": [250, 100],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "1",
-          "name": "Google Drive account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "events": [
-          "file_added"
-        ]
-      },
-      "name": "Dropbox Trigger",
-      "type": "n8n-nodes-base.dropboxTrigger",
-      "typeVersion": 1,
-      "position": [250, 250],
-      "credentials": {
-        "dropboxApi": {
-          "id": "2",
-          "name": "Dropbox account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "path": "document-upload",
+        "path": "doc-webhook",
         "responseMode": "onReceived",
+        "httpMethod": "POST",
         "options": {}
       },
-      "name": "File Upload Webhook",
+      "name": "Document Upload Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [250, 400],
-      "webhookId": "document-upload-webhook"
+      "position": [250, 300],
+      "webhookId": "doc-webhook"
     },
     {
       "parameters": {
-        "path": "/watch/*/",
-        "responseMode": "onReceived"
+        "command": "find /data -type f -mmin -1 -name '*.pdf' -o -name '*.txt' -o -name '*.jpg' -o -name '*.png' | head -10"
       },
-      "name": "Local Folder Watcher",
-      "type": "n8n-nodes-base.webhook",
+      "name": "Find New Files",
+      "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
-      "position": [250, 550]
+      "position": [250, 500]
     },
     {
       "parameters": {
-        "functionCode": "// Normalisiere Eingangsdaten von verschiedenen Quellen\nconst items = [];\n\nfor (const item of $input.all()) {\n  let fileData = {};\n  \n  // Google Drive\n  if (item.json.mimeType) {\n    fileData = {\n      source: 'google_drive',\n      fileId: item.json.id,\n      fileName: item.json.name,\n      mimeType: item.json.mimeType,\n      fileSize: item.json.size,\n      downloadUrl: item.json.webContentLink,\n      createdTime: item.json.createdTime,\n      modifiedTime: item.json.modifiedTime\n    };\n  }\n  // Dropbox\n  else if (item.json.path_lower) {\n    fileData = {\n      source: 'dropbox',\n      fileId: item.json.id,\n      fileName: item.json.name,\n      path: item.json.path_lower,\n      fileSize: item.json.size,\n      modifiedTime: item.json.client_modified\n    };\n  }\n  // File Upload\n  else if (item.binary) {\n    const binaryData = item.binary.data;\n    fileData = {\n      source: 'upload',\n      fileName: binaryData.fileName,\n      mimeType: binaryData.mimeType,\n      fileSize: binaryData.fileSize,\n      data: binaryData.data\n    };\n  }\n  // Local Folder\n  else if (item.json.filePath) {\n    fileData = {\n      source: 'local',\n      fileName: item.json.fileName,\n      filePath: item.json.filePath,\n      fileSize: item.json.fileSize\n    };\n  }\n  \n  // Füge Metadaten hinzu\n  fileData.processId = `${fileData.source}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n  fileData.receivedAt = new Date().toISOString();\n  \n  items.push({json: fileData});\n}\n\nreturn items;"
+        "functionCode": "// Process file list and create tasks\nconst items = [];\nconst stdout = $input.all()[0].json.stdout;\n\nif (stdout && stdout.trim()) {\n  const files = stdout.trim().split('\\n').filter(f => f);\n  \n  for (const filePath of files) {\n    const fileName = filePath.split('/').pop();\n    const fileExt = fileName.split('.').pop().toLowerCase();\n    \n    // Determine task type\n    let taskType = 'index';\n    if (['pdf', 'png', 'jpg', 'jpeg', 'tiff', 'tif'].includes(fileExt)) {\n      taskType = 'ocr';\n    } else if (['txt', 'md', 'csv'].includes(fileExt)) {\n      taskType = 'text';\n    }\n    \n    // Create task\n    const task = {\n      task_id: `n8n_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n      file_path: filePath,\n      file_name: fileName,\n      task_type: taskType,\n      source: 'n8n_file_watcher',\n      priority: 5,\n      created_at: new Date().toISOString()\n    };\n    \n    items.push({json: task});\n  }\n}\n\nreturn items.length > 0 ? items : [{json: {message: 'No new files found'}}];"
       },
-      "name": "Normalize Input Data",
+      "name": "Create Tasks from Files",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [600, 300]
+      "position": [450, 500]
     },
     {
       "parameters": {
-        "conditions": {
-          "string": [
-            {
-              "value1": "={{$json.source}}",
-              "operation": "equals",
-              "value2": "google_drive"
-            }
-          ]
-        }
+        "binaryPropertyName": "data",
+        "fileName": "={{$json.file_name}}"
       },
-      "name": "Is Google Drive?",
-      "type": "n8n-nodes-base.if",
+      "name": "Read File Binary",
+      "type": "n8n-nodes-base.readBinaryFile",
       "typeVersion": 1,
-      "position": [800, 200]
+      "position": [650, 500]
     },
     {
       "parameters": {
-        "operation": "download",
-        "fileId": "={{$json.fileId}}"
+        "functionCode": "// Convert binary to base64 and enhance task\nconst items = [];\n\nfor (const item of $input.all()) {\n  const task = item.json;\n  \n  if (item.binary && item.binary.data) {\n    // Add base64 content to task\n    task.file_content = item.binary.data.data;\n    task.mime_type = item.binary.data.mimeType || 'application/octet-stream';\n  }\n  \n  items.push({json: task});\n}\n\nreturn items;"
       },
-      "name": "Download from Google",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 2,
-      "position": [1000, 100]
-    },
-    {
-      "parameters": {
-        "functionCode": "// Hole Dateiinhalt basierend auf Quelle\nconst items = [];\n\nfor (const item of $input.all()) {\n  const source = item.json.source;\n  let fileContent = null;\n  let mimeType = item.json.mimeType || 'application/octet-stream';\n  \n  if (source === 'upload') {\n    // Daten sind bereits im Binary-Format\n    items.push(item);\n  } else if (source === 'local') {\n    // Für lokale Dateien würde man hier den Inhalt lesen\n    // In der Praxis würde dies über einen Agent erfolgen\n    items.push({\n      json: item.json,\n      binary: {\n        data: {\n          fileName: item.json.fileName,\n          mimeType: mimeType,\n          data: 'BASE64_ENCODED_CONTENT'\n        }\n      }\n    });\n  } else {\n    // Andere Quellen werden durch spezifische Nodes behandelt\n    items.push(item);\n  }\n}\n\nreturn items;"
-      },
-      "name": "Process Other Sources",
+      "name": "Add Base64 Content",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [1000, 300]
-    },
-    {
-      "parameters": {
-        "functionCode": "// Konvertiere zu Base64 falls nötig und erstelle OCR Task\nconst items = [];\n\nfor (const item of $input.all()) {\n  const fileData = item.json;\n  let base64Content = '';\n  \n  // Hole Base64 Content\n  if (item.binary && item.binary.data) {\n    base64Content = item.binary.data.data;\n  }\n  \n  // Erstelle OCR Task\n  const ocrTask = {\n    task_id: fileData.processId,\n    file_name: fileData.fileName,\n    mime_type: fileData.mimeType || 'application/octet-stream',\n    source: fileData.source,\n    file_content: base64Content,\n    task_type: determineTaskType(fileData.fileName, fileData.mimeType),\n    priority: 5,\n    created_at: new Date().toISOString(),\n    metadata: {\n      original_source: fileData.source,\n      file_size: fileData.fileSize,\n      received_at: fileData.receivedAt\n    }\n  };\n  \n  items.push({json: ocrTask});\n}\n\nfunction determineTaskType(fileName, mimeType) {\n  const ocrExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif'];\n  const textExtensions = ['.txt', '.md', '.csv', '.json'];\n  \n  const ext = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));\n  \n  if (ocrExtensions.includes(ext)) {\n    return 'ocr';\n  } else if (textExtensions.includes(ext)) {\n    return 'text';\n  } else if (mimeType && mimeType.includes('image')) {\n    return 'ocr';\n  } else {\n    return 'index';\n  }\n}\n\nreturn items;"
-      },
-      "name": "Create OCR Task",
-      "type": "n8n-nodes-base.function",
-      "typeVersion": 1,
-      "position": [1200, 300]
+      "position": [850, 500]
     },
     {
       "parameters": {
@@ -122,13 +60,22 @@
       "name": "Push to Redis Queue",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1400, 300],
+      "position": [1050, 400],
       "credentials": {
         "redis": {
-          "id": "3",
+          "id": "1",
           "name": "Redis"
         }
       }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process webhook uploads\nconst items = [];\n\nfor (const item of $input.all()) {\n  if (item.binary && item.binary.data) {\n    const binaryData = item.binary.data;\n    \n    const task = {\n      task_id: `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n      file_name: binaryData.fileName || 'upload.bin',\n      file_content: binaryData.data,\n      mime_type: binaryData.mimeType || 'application/octet-stream',\n      task_type: determineTaskType(binaryData.fileName, binaryData.mimeType),\n      source: 'webhook_upload',\n      priority: 5,\n      created_at: new Date().toISOString()\n    };\n    \n    items.push({json: task});\n  } else if (item.json.event === 'file_added' && item.json.file_path) {\n    // Legacy format support\n    const task = {\n      task_id: `legacy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n      file_path: item.json.file_path,\n      task_type: 'ocr',\n      source: item.json.source || 'webhook',\n      priority: 5,\n      created_at: new Date().toISOString()\n    };\n    \n    items.push({json: task});\n  }\n}\n\nfunction determineTaskType(fileName, mimeType) {\n  const ext = (fileName || '').toLowerCase().split('.').pop();\n  \n  if (['pdf', 'png', 'jpg', 'jpeg', 'tiff', 'tif'].includes(ext) || \n      (mimeType && mimeType.includes('image'))) {\n    return 'ocr';\n  } else if (['txt', 'md', 'csv'].includes(ext) || \n             (mimeType && mimeType.includes('text'))) {\n    return 'text';\n  }\n  \n  return 'index';\n}\n\nreturn items;"
+      },
+      "name": "Process Webhook Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [450, 300]
     },
     {
       "parameters": {
@@ -145,6 +92,10 @@
             {
               "name": "task_id",
               "value": "={{$json.task_id}}"
+            },
+            {
+              "name": "queue_length",
+              "value": "={{$json.queue_length || 'unknown'}}"
             }
           ]
         }
@@ -152,106 +103,92 @@
       "name": "Success Response",
       "type": "n8n-nodes-base.set",
       "typeVersion": 1,
-      "position": [1600, 300]
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [50, 500]
     }
   ],
   "connections": {
-    "Google Drive Trigger": {
+    "Document Upload Webhook": {
       "main": [
         [
           {
-            "node": "Normalize Input Data",
+            "node": "Process Webhook Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Dropbox Trigger": {
+    "Schedule Trigger": {
       "main": [
         [
           {
-            "node": "Normalize Input Data",
+            "node": "Find New Files",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "File Upload Webhook": {
+    "Find New Files": {
       "main": [
         [
           {
-            "node": "Normalize Input Data",
+            "node": "Create Tasks from Files",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Local Folder Watcher": {
+    "Create Tasks from Files": {
       "main": [
         [
           {
-            "node": "Normalize Input Data",
+            "node": "Read File Binary",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Normalize Input Data": {
+    "Read File Binary": {
       "main": [
         [
           {
-            "node": "Is Google Drive?",
+            "node": "Add Base64 Content",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Is Google Drive?": {
+    "Add Base64 Content": {
       "main": [
         [
           {
-            "node": "Download from Google",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Process Other Sources",
+            "node": "Push to Redis Queue",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Download from Google": {
-      "main": [
-        [
-          {
-            "node": "Create OCR Task",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Process Other Sources": {
-      "main": [
-        [
-          {
-            "node": "Create OCR Task",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create OCR Task": {
+    "Process Webhook Data": {
       "main": [
         [
           {
