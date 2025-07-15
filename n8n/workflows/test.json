@@ -1,0 +1,67 @@
+{
+  "name": "Data Folder OCR Trigger",
+  "nodes": [
+    {
+      "parameters": {
+        "command": "ls -1 /data"
+      },
+      "name": "List Files",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [300, 300]
+    },
+    {
+      "parameters": {
+        "command": "=echo {{$json[\"stdout\"]}} | tr '\\n' ','"
+      },
+      "name": "Format List",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://search_api:8001/webhook/process",
+        "sendBody": true,
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "{\"event\": \"file_added\", \"file_path\": \"/data/{{ $json[\"stdout\"] }}\", \"source\": \"n8n_test\"}"
+      },
+      "name": "Send to Search API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [700, 300]
+    }
+  ],
+  "connections": {
+    "List Files": {
+      "main": [
+        [
+          {
+            "node": "Format List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format List": {
+      "main": [
+        [
+          {
+            "node": "Send to Search API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1",
+  "meta": {
+    "instanceId": "doc-intel"
+  }
+}
