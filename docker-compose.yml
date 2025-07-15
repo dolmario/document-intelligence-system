@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   redis:
     image: redis:7-alpine
@@ -9,7 +11,7 @@ services:
     networks:
       - doc_network
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -20,9 +22,9 @@ services:
     image: postgres:16-alpine
     container_name: doc-intel-postgres
     environment:
-      POSTGRES_USER: docintell
-      POSTGRES_PASSWORD: docintell123
-      POSTGRES_DB: document_intelligence
+      POSTGRES_USER: ${POSTGRES_USER:-docintell}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-docintell123}
+      POSTGRES_DB: ${POSTGRES_DB:-document_intelligence}
     ports:
       - "5432:5432"
     volumes:
@@ -30,7 +32,7 @@ services:
     networks:
       - doc_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U docintell -d document_intelligence"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-docintell} -d ${POSTGRES_DB:-document_intelligence}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -69,10 +71,10 @@ services:
       - ./logs:/app/logs
     environment:
       REDIS_URL: redis://redis:6379
-      TESSERACT_LANG: deu+eng
+      TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
       PYTHONPATH: /app
       LOG_PATH: /app/logs
-      ENABLE_PII_REMOVAL: "true"
+      ENABLE_PII_REMOVAL: ${ENABLE_PII_REMOVAL:-true}
       PYTHONUNBUFFERED: 1
     depends_on:
       redis:
@@ -122,8 +124,8 @@ services:
       PYTHONPATH: /app
       LOG_PATH: /app/logs
       INDEX_PATH: /indices
-      CORS_ALLOW_ORIGIN: http://localhost:8080,http://localhost:5678
-      USER_AGENT: DocumentIntelligenceSystem/1.0
+      CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:-http://localhost:8080,http://localhost:5678}
+      USER_AGENT: ${USER_AGENT:-DocumentIntelligenceSystem/1.0}
       PYTHONUNBUFFERED: 1
     depends_on:
       redis:
@@ -148,19 +150,19 @@ services:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
       DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: document_intelligence
-      DB_POSTGRESDB_USER: docintell
-      DB_POSTGRESDB_PASSWORD: docintell123
-      N8N_BASIC_AUTH_ACTIVE: "true"
-      N8N_BASIC_AUTH_USER: admin
-      N8N_BASIC_AUTH_PASSWORD: changeme
-      N8N_ENCRYPTION_KEY: n8n-encryption-key
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-document_intelligence}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-docintell}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-docintell123}
+      N8N_BASIC_AUTH_ACTIVE: true
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-n8n-encryption-key}
       N8N_HOST: 0.0.0.0
       N8N_PORT: 5678
       N8N_PROTOCOL: http
       WEBHOOK_URL: http://localhost:5678/webhook/doc-webhook
       GENERIC_TIMEZONE: Europe/Berlin
-      N8N_RUNNERS_ENABLED: "true"
+      N8N_RUNNERS_ENABLED: true
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows
@@ -177,19 +179,22 @@ services:
     container_name: doc-intel-ollama
     ports:
       - "11434:11434"
-    runtime: nvidia
     environment:
       OLLAMA_KEEP_ALIVE: 24h
       OLLAMA_HOST: 0.0.0.0
       OLLAMA_DEBUG: INFO
-      OLLAMA_GPU_OVERHEAD: 0
-      OLLAMA_LLM_LIBRARY: cublas
-      NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ollama_data:/root/.ollama
     networks:
       - doc_network
     restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -198,9 +203,9 @@ services:
       - "8080:8080"
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
-      WEBUI_SECRET_KEY: secret-key-change-me
-      WEBUI_AUTH: "false"
-      ENABLE_SIGNUP: "true"
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-secret-key-change-me}
+      WEBUI_AUTH: false
+      ENABLE_SIGNUP: true
       DEFAULT_MODELS: mistral,llama3,phi
     volumes:
       - open_webui_data:/app/backend/data
