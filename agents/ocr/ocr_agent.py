@@ -1,157 +1,138 @@
 import asyncio
 import json
+import base64
+import io
+from typing import Dict, Any, Optional
 import pytesseract
 from PIL import Image
 import pdf2image
-from pathlib import Path
 import redis.asyncio as redis
-from typing import Optional, Dict, Any
 import logging
 from datetime import datetime
 
-from core.utils import setup_logger, config
-from core.models import ProcessingTask
-from core.privacy import PrivacyManager
+logger = logging.getLogger('n8n_ocr_agent')
 
-logger = setup_logger('ocr_agent', 'ocr.log')
-
-class OCRAgent:
+class N8NBasedOCRAgent:
+    """OCR Agent der mit N8N-übergebenen Base64-Daten arbeitet"""
+    
     def __init__(self, redis_url: str):
         self.redis_url = redis_url
         self.redis_client = None
-        self.privacy_manager = PrivacyManager()
         self.running = True
         
     async def connect(self):
-        """Verbinde mit Redis mit korrekten Encoding-Einstellungen"""
-        # KRITISCH: decode_responses=True für konsistentes String-Handling
+        """Verbinde mit Redis"""
         self.redis_client = await redis.from_url(
             self.redis_url,
-            decode_responses=True,  # ✅ Automatisches Decoding von bytes zu strings
-            encoding='utf-8',       # ✅ UTF-8 Encoding
-            encoding_errors='strict' # ✅ Strikte Fehlerbehandlung
+            decode_responses=True,
+            encoding='utf-8'
         )
-        logger.info("OCR Agent connected to Redis with decode_responses=True")
+        logger.info("N8N OCR Agent connected to Redis")
     
     async def process_queue(self):
-        """Verarbeite Processing-Queue mit robustem JSON Handling"""
+        """Verarbeite OCR Tasks von N8N"""
         while self.running:
             try:
-                # brpop gibt ein Tuple zurück: (queue_name, data)
                 result = await self.redis_client.brpop('processing_queue', timeout=5)
                 
                 if result:
-                    queue_name, task_data = result
-                    logger.debug(f"Received from queue: type={type(task_data)}, data={task_data[:100]}...")
+                    _, task_data = result
+                    task = json.loads(task_data)
                     
-                    try:
-                        # Parse JSON - task_data ist bereits ein String dank decode_responses=True
-                        task = json.loads(task_data)
+                    # Task enthält jetzt Base64-kodierten Dateiinhalt
+                    if 'file_content' in task:
+                        await self.process_n8n_task(task)
+                    else:
+                        # Fallback für alte Tasks
+                        await self.process_legacy_task(task)
                         
-                        # Validiere erforderliche Felder
-                        required_fields = ['task_id', 'file_path', 'task_type']
-                        if not all(field in task for field in required_fields):
-                            logger.error(f"Missing required fields in task: {task}")
-                            continue
-                            
-                        if task['task_type'] == 'ocr':
-                            await self.process_ocr_task(task)
-                            
-                    except json.JSONDecodeError as e:
-                        logger.error(f"JSON decode error: {e}")
-                        logger.error(f"Raw data: {repr(task_data)}")
-                        # Optional: Sende fehlgeschlagene Tasks in eine Error-Queue
-                        await self.redis_client.lpush('failed_json_tasks', task_data)
-                        continue
-                        
-            except asyncio.TimeoutError:
-                # Timeout ist normal bei brpop
-                continue
             except Exception as e:
                 logger.error(f"Queue processing error: {str(e)}", exc_info=True)
                 await asyncio.sleep(5)
     
-    async def process_ocr_task(self, task: Dict[str, Any]):
-        """Verarbeite OCR Task mit verbessertem Error Handling"""
+    async def process_n8n_task(self, task: Dict[str, Any]):
+        """Verarbeite Task mit Base64-Content von N8N"""
         try:
-            filepath = Path(task['file_path'])
-            logger.info(f"Starting OCR for: {filepath}")
+            logger.info(f"Processing N8N task: {task['task_id']} - {task['file_name']}")
             
-            if not filepath.exists():
-                logger.error(f"File not found: {filepath}")
-                await self.handle_failed_task(task, 'File not found')
-                return
+            # Dekodiere Base64-Content
+            file_content = base64.b64decode(task['file_content'])
             
-            text = await self.extract_text(filepath)
+            # Bestimme Verarbeitungstyp
+            if task['task_type'] == 'ocr':
+                text = await self.extract_text_from_bytes(
+                    file_content,
+                    task['file_name'],
+                    task.get('mime_type', 'application/octet-stream')
+                )
+            elif task['task_type'] == 'text':
+                # Direkte Text-Verarbeitung
+                text = file_content.decode('utf-8', errors='ignore')
+            else:
+                logger.warning(f"Unknown task type: {task['task_type']}")
+                text = ""
             
             if text:
-                if config.enable_pii_removal:
-                    text = self.privacy_manager.anonymize_text(text)
-                
+                # Erstelle Ergebnis
                 result = {
                     'task_id': task['task_id'],
-                    'file_path': str(filepath),
+                    'file_name': task['file_name'],
+                    'source': task.get('source', 'n8n'),
                     'extracted_text': text,
+                    'metadata': task.get('metadata', {}),
                     'ocr_completed_at': datetime.now().isoformat()
                 }
                 
-                # Sende Ergebnis zur Indexing-Queue
+                # Sende zur Indexierung
                 await self.redis_client.lpush('indexing_queue', json.dumps(result))
-                logger.info(f"OCR completed for: {filepath}")
+                logger.info(f"OCR completed for: {task['file_name']}")
+                
+                # Optional: Sende Erfolg-Notification an N8N
+                await self.send_n8n_callback(task['task_id'], 'success', result)
+                
             else:
-                logger.warning(f"No text extracted from: {filepath}")
-                await self.handle_failed_task(task, 'No text extracted')
+                logger.warning(f"No text extracted from: {task['file_name']}")
+                await self.send_n8n_callback(task['task_id'], 'failed', {'error': 'No text extracted'})
                 
         except Exception as e:
-            logger.error(f"OCR error for {task['file_path']}: {str(e)}", exc_info=True)
-            await self.handle_failed_task(task, str(e))
+            logger.error(f"N8N task processing error: {str(e)}", exc_info=True)
+            await self.send_n8n_callback(task['task_id'], 'error', {'error': str(e)})
     
-    async def handle_failed_task(self, task: Dict[str, Any], error_message: str):
-        """Behandle fehlgeschlagene Tasks"""
-        failed_task = {
-            **task,
-            'error': error_message,
-            'failed_at': datetime.now().isoformat()
-        }
-        await self.redis_client.lpush('failed_tasks', json.dumps(failed_task))
-    
-    async def extract_text(self, filepath: Path) -> Optional[str]:
-        """Extrahiere Text aus verschiedenen Dateiformaten"""
-        ext = filepath.suffix.lower()
-        
+    async def extract_text_from_bytes(self, file_bytes: bytes, filename: str, mime_type: str) -> str:
+        """Extrahiere Text aus Bytes"""
         try:
-            if ext == '.pdf':
-                return await self.ocr_pdf(filepath)
-            elif ext in ['.png', '.jpg', '.jpeg', '.tiff', '.tif']:
-                return await self.ocr_image(filepath)
-            elif ext in ['.txt', '.md']:
-                # Versuche verschiedene Encodings
-                for encoding in ['utf-8', 'latin1', 'cp1252']:
-                    try:
-                        return filepath.read_text(encoding=encoding)
-                    except UnicodeDecodeError:
-                        continue
-                logger.error(f"Could not decode text file: {filepath}")
-                return None
+            # PDF
+            if mime_type == 'application/pdf' or filename.lower().endswith('.pdf'):
+                return await self.ocr_pdf_from_bytes(file_bytes)
+            
+            # Bilder
+            elif mime_type.startswith('image/') or filename.lower().endswith(('.png', '.jpg', '.jpeg', '.tiff', '.tif')):
+                return await self.ocr_image_from_bytes(file_bytes)
+            
+            # Text-Dateien
+            elif mime_type.startswith('text/') or filename.lower().endswith(('.txt', '.md', '.csv')):
+                return file_bytes.decode('utf-8', errors='ignore')
+            
             else:
-                logger.warning(f"Unsupported format: {ext}")
-                return None
+                logger.warning(f"Unsupported file type: {mime_type} / {filename}")
+                return ""
                 
         except Exception as e:
-            logger.error(f"Error extracting text: {str(e)}", exc_info=True)
-            return None
+            logger.error(f"Text extraction error: {str(e)}", exc_info=True)
+            return ""
     
-    async def ocr_pdf(self, filepath: Path) -> str:
-        """OCR für PDF-Dateien"""
+    async def ocr_pdf_from_bytes(self, pdf_bytes: bytes) -> str:
+        """OCR für PDF aus Bytes"""
         try:
-            images = pdf2image.convert_from_path(filepath, dpi=300)
+            # Konvertiere PDF zu Bildern
+            images = pdf2image.convert_from_bytes(pdf_bytes, dpi=300)
             
             texts = []
             for i, image in enumerate(images):
-                logger.debug(f"Processing page {i+1} of {len(images)}")
+                logger.debug(f"Processing PDF page {i+1}")
                 text = pytesseract.image_to_string(
-                    image, 
-                    lang=config.tesseract_lang
+                    image,
+                    lang='deu+eng'  # Konfigurierbar machen
                 )
                 texts.append(text)
             
@@ -161,14 +142,15 @@ class OCRAgent:
             logger.error(f"PDF OCR error: {str(e)}", exc_info=True)
             raise
     
-    async def ocr_image(self, filepath: Path) -> str:
-        """OCR für Bilddateien"""
+    async def ocr_image_from_bytes(self, image_bytes: bytes) -> str:
+        """OCR für Bild aus Bytes"""
         try:
-            image = Image.open(filepath)
+            # Öffne Bild aus Bytes
+            image = Image.open(io.BytesIO(image_bytes))
             
             text = pytesseract.image_to_string(
                 image,
-                lang=config.tesseract_lang
+                lang='deu+eng'  # Konfigurierbar machen
             )
             
             return text
@@ -177,15 +159,34 @@ class OCRAgent:
             logger.error(f"Image OCR error: {str(e)}", exc_info=True)
             raise
     
+    async def send_n8n_callback(self, task_id: str, status: str, data: dict):
+        """Sende Status-Update zurück an N8N"""
+        callback_data = {
+            'task_id': task_id,
+            'status': status,
+            'timestamp': datetime.now().isoformat(),
+            'data': data
+        }
+        
+        # Sende an spezielle Callback-Queue für N8N
+        await self.redis_client.lpush('n8n_callbacks', json.dumps(callback_data))
+    
+    async def process_legacy_task(self, task: Dict[str, Any]):
+        """Fallback für alte file_path basierte Tasks"""
+        logger.warning(f"Legacy task received: {task.get('file_path', 'unknown')}")
+        # Konvertiere zu N8N-Format wenn möglich
+        # Oder ignoriere
+        pass
+    
     async def run(self):
-        """Hauptloop mit Graceful Shutdown"""
+        """Hauptloop"""
         await self.connect()
-        logger.info("OCR Agent started")
+        logger.info("N8N-based OCR Agent started")
         
         try:
             await self.process_queue()
         except KeyboardInterrupt:
-            logger.info("OCR Agent shutting down gracefully")
+            logger.info("OCR Agent shutting down")
             self.running = False
         finally:
             if self.redis_client:
@@ -196,7 +197,13 @@ def main():
     
     redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
     
-    agent = OCRAgent(redis_url)
+    # Setup Logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    agent = N8NBasedOCRAgent(redis_url)
     asyncio.run(agent.run())
 
 if __name__ == "__main__":
