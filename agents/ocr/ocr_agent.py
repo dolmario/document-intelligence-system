@@ -23,43 +23,59 @@ class OCRAgent:
         self.running = True
         
     async def connect(self):
-        """Connect to Redis"""
         self.redis_client = await redis.from_url(self.redis_url)
         logger.info("OCR Agent connected to Redis")
     
     async def process_queue(self):
-        """Process OCR queue"""
         while self.running:
             try:
-                # Get task from queue
                 task_data = await self.redis_client.brpop('processing_queue', timeout=5)
                 
                 if task_data:
                     _, task_json = task_data
-                    task = json.loads(task_json)
                     
-                    if task['task_type'] == 'ocr':
-                        await self.process_ocr_task(task)
+                    try:
+                        task = json.loads(task_json)
+                        
+                        required_fields = ['task_id', 'file_path', 'task_type']
+                        if not all(field in task for field in required_fields):
+                            logger.error(f"Missing required fields in task: {task}")
+                            continue
+                            
+                        if task['task_type'] == 'ocr':
+                            await self.process_ocr_task(task)
+                            
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON in queue: {task_json[:100]}... Error: {e}")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Task processing error: {e}")
+                        continue
                         
             except Exception as e:
-                logger.error(f"Error in process_queue: {str(e)}")
+                logger.error(f"Queue processing error: {str(e)}")
                 await asyncio.sleep(5)
     
     async def process_ocr_task(self, task: Dict[str, Any]):
-        """Perform OCR for a file"""
         try:
             filepath = Path(task['file_path'])
             logger.info(f"Starting OCR for: {filepath}")
             
-            # Perform OCR
+            if not filepath.exists():
+                logger.error(f"File not found: {filepath}")
+                await self.redis_client.lpush('failed_tasks', json.dumps({
+                    **task,
+                    'error': 'File not found',
+                    'failed_at': datetime.now().isoformat()
+                }))
+                return
+            
             text = await self.extract_text(filepath)
             
             if text:
-                # Remove PII if enabled
                 if config.enable_pii_removal:
                     text = self.privacy_manager.anonymize_text(text)
                 
-                # Prepare result for indexer
                 result = {
                     'task_id': task['task_id'],
                     'file_path': str(filepath),
@@ -67,7 +83,6 @@ class OCRAgent:
                     'ocr_completed_at': datetime.now().isoformat()
                 }
                 
-                # Send to indexer queue
                 await self.redis_client.lpush('indexing_queue', json.dumps(result))
                 logger.info(f"OCR completed for: {filepath}")
             else:
@@ -75,7 +90,6 @@ class OCRAgent:
                 
         except Exception as e:
             logger.error(f"OCR error for {task['file_path']}: {str(e)}")
-            # Mark task as failed
             await self.redis_client.lpush('failed_tasks', json.dumps({
                 **task,
                 'error': str(e),
@@ -83,7 +97,6 @@ class OCRAgent:
             }))
     
     async def extract_text(self, filepath: Path) -> Optional[str]:
-        """Extract text from file"""
         ext = filepath.suffix.lower()
         
         try:
@@ -92,7 +105,13 @@ class OCRAgent:
             elif ext in ['.png', '.jpg', '.jpeg', '.tiff', '.tif']:
                 return await self.ocr_image(filepath)
             elif ext in ['.txt', '.md']:
-                return filepath.read_text(encoding='utf-8')
+                try:
+                    return filepath.read_text(encoding='utf-8')
+                except UnicodeDecodeError:
+                    try:
+                        return filepath.read_text(encoding='latin1')
+                    except UnicodeDecodeError:
+                        return filepath.read_text(encoding='cp1252')
             else:
                 logger.warning(f"Unsupported format: {ext}")
                 return None
@@ -102,9 +121,7 @@ class OCRAgent:
             return None
     
     async def ocr_pdf(self, filepath: Path) -> str:
-        """OCR for PDF files"""
         try:
-            # Convert PDF to images
             images = pdf2image.convert_from_path(filepath, dpi=300)
             
             texts = []
@@ -123,11 +140,8 @@ class OCRAgent:
             raise
     
     async def ocr_image(self, filepath: Path) -> str:
-        """OCR for images"""
         try:
             image = Image.open(filepath)
-            
-            # Image preprocessing for better OCR results could be added here
             
             text = pytesseract.image_to_string(
                 image,
@@ -141,7 +155,6 @@ class OCRAgent:
             raise
     
     async def run(self):
-        """Main loop"""
         await self.connect()
         logger.info("OCR Agent started")
         
