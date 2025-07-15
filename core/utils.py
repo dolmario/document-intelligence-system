@@ -8,12 +8,10 @@ import aiofiles
 import asyncio
 
 
-# Logger Setup mit korrigiertem Path
 def setup_logger(name: str, log_file: Optional[str] = None) -> logging.Logger:
-    """Erstelle konfigurierten Logger - FIXED: Korrekte Pfad-Behandlung"""
+    """Setup configured logger with proper path handling"""
     logger = logging.getLogger(name)
     
-    # Verhindere mehrfache Handler
     if logger.handlers:
         return logger
         
@@ -28,19 +26,12 @@ def setup_logger(name: str, log_file: Optional[str] = None) -> logging.Logger:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # File Handler wenn angegeben - FIXED: Korrekte Pfad-Konstruktion
+    # File Handler
     if log_file:
-        # Use environment variable for log path if available
         log_path = os.getenv('LOG_PATH', './logs')
-        
-        # FIXED: Entferne doppelte 'logs' im Pfad
         log_dir = Path(log_path)
         log_dir.mkdir(parents=True, exist_ok=True)
 
-        # FIXED: Direkte Datei-Konstruktion ohne doppelten logs-Ordner
-        if log_file.startswith('logs/'):
-            log_file = log_file[5:]  # Entferne 'logs/' Prefix
-            
         full_log_path = log_dir / log_file
         
         try:
@@ -48,52 +39,48 @@ def setup_logger(name: str, log_file: Optional[str] = None) -> logging.Logger:
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
         except Exception as e:
-            # Fallback: Log nur in Console wenn File-Handler fehlschlägt
-            logger.warning(f"Konnte Log-Datei nicht erstellen: {e}")
+            logger.warning(f"Could not create log file: {e}")
 
     return logger
 
 
-# File Utils
 def get_file_extension(filepath: str) -> str:
-    """Extrahiere Dateierweiterung"""
+    """Extract file extension"""
     return Path(filepath).suffix.lower().lstrip('.')
 
 
 def is_supported_file(filepath: str, supported_extensions: List[str]) -> bool:
-    """Prüfe ob Datei unterstützt wird"""
+    """Check if file is supported"""
     ext = get_file_extension(filepath)
     return ext in supported_extensions
 
 
 async def read_file_async(filepath: str) -> bytes:
-    """Lese Datei asynchron"""
+    """Read file asynchronously"""
     async with aiofiles.open(filepath, 'rb') as f:
         return await f.read()
 
 
 async def write_file_async(filepath: str, content: bytes):
-    """Schreibe Datei asynchron"""
+    """Write file asynchronously"""
     async with aiofiles.open(filepath, 'wb') as f:
         await f.write(content)
 
 
-# JSON Utils
 def load_json_file(filepath: str) -> Dict[str, Any]:
-    """Lade JSON Datei"""
+    """Load JSON file"""
     with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 
 def save_json_file(filepath: str, data: Dict[str, Any]):
-    """Speichere JSON Datei"""
+    """Save JSON file"""
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# Text Processing Utils
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
-    """Teile Text in überlappende Chunks"""
+    """Split text into overlapping chunks"""
     chunks = []
     start = 0
 
@@ -101,10 +88,10 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
         end = start + chunk_size
         chunk = text[start:end]
 
-        # Versuche an Wortgrenze zu splitten
+        # Try to split at word boundary
         if end < len(text):
             last_space = chunk.rfind(' ')
-            if last_space > chunk_size * 0.8:  # Nur wenn nicht zu viel verloren geht
+            if last_space > chunk_size * 0.8:
                 end = start + last_space
                 chunk = text[start:end]
 
@@ -115,7 +102,7 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
 
 
 def extract_text_statistics(text: str) -> Dict[str, int]:
-    """Extrahiere Basis-Statistiken aus Text"""
+    """Extract basic text statistics"""
     words = text.split()
     sentences = text.split('.')
 
@@ -127,14 +114,13 @@ def extract_text_statistics(text: str) -> Dict[str, int]:
     }
 
 
-# Path Utils
 def ensure_directory(path: Path):
-    """Stelle sicher dass Verzeichnis existiert"""
+    """Ensure directory exists"""
     path.mkdir(parents=True, exist_ok=True)
 
 
 def get_project_root() -> Path:
-    """Finde Projekt-Root-Verzeichnis"""
+    """Find project root directory"""
     current = Path(__file__).parent
     while current.parent != current:
         if (current / '.git').exists() or (current / 'pyproject.toml').exists():
@@ -143,15 +129,14 @@ def get_project_root() -> Path:
     return Path.cwd()
 
 
-# Config Utils
 class Config:
-    """Zentrale Konfiguration"""
+    """Central configuration management"""
 
     def __init__(self):
         self.load_from_env()
 
     def load_from_env(self):
-        """Lade Konfiguration aus Umgebungsvariablen"""
+        """Load configuration from environment variables"""
         self.data_path = Path(os.getenv('DATA_PATH', './data'))
         self.index_path = Path(os.getenv('INDEX_PATH', './indices'))
         self.log_path = Path(os.getenv('LOG_PATH', './logs'))
@@ -162,7 +147,7 @@ class Config:
         self.min_relevance_score = float(os.getenv('MIN_RELEVANCE_SCORE', '0.3'))
         self.cache_ttl = int(os.getenv('CACHE_TTL', '3600'))
 
-        # Stelle sicher dass Verzeichnisse existieren
+        # Ensure directories exist
         ensure_directory(self.data_path)
         ensure_directory(self.index_path)
         ensure_directory(self.log_path)
