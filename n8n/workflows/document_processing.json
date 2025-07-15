@@ -1,18 +1,21 @@
 {
-  "name": "Document Processing with File Watcher",
+  "name": "My workflow",
   "nodes": [
     {
       "parameters": {
-        "path": "doc-webhook",
-        "responseMode": "onReceived",
         "httpMethod": "POST",
+        "path": "doc-webhook",
         "options": {}
       },
       "name": "Document Upload Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [250, 300],
-      "webhookId": "doc-webhook"
+      "position": [
+        1568,
+        432
+      ],
+      "webhookId": "doc-webhook",
+      "id": "6e554638-09f0-42ab-b08b-a886a546c201"
     },
     {
       "parameters": {
@@ -21,7 +24,12 @@
       "name": "Find New Files",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
-      "position": [250, 500]
+      "position": [
+        1568,
+        624
+      ],
+      "id": "3e00bd50-cc5d-4a23-b6c8-4fe55578338d",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -30,17 +38,26 @@
       "name": "Create Tasks from Files",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [450, 500]
+      "position": [
+        1776,
+        624
+      ],
+      "id": "5ea0821f-d973-4ddc-bad3-eb8b27e6b854",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "binaryPropertyName": "data",
-        "fileName": "={{$json.file_name}}"
+        "filePath": "={{ $json.file_path.trim() }}"
       },
       "name": "Read File Binary",
       "type": "n8n-nodes-base.readBinaryFile",
       "typeVersion": 1,
-      "position": [650, 500]
+      "position": [
+        1968,
+        624
+      ],
+      "id": "f5e88fb1-d1d5-448e-901f-0534e9be44ad",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -49,24 +66,34 @@
       "name": "Add Base64 Content",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [850, 500]
+      "position": [
+        2176,
+        624
+      ],
+      "id": "746ac862-8f5a-4c7d-b1f0-4dc5ede83365",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "operation": "push",
-        "list": "processing_queue",
+        "list": "=processing_queue",
         "messageData": "={{JSON.stringify($json)}}"
       },
       "name": "Push to Redis Queue",
       "type": "n8n-nodes-base.redis",
       "typeVersion": 1,
-      "position": [1050, 400],
+      "position": [
+        2368,
+        528
+      ],
+      "id": "20c5922a-e9a7-4e1e-b919-3c86f96d2af7",
       "credentials": {
         "redis": {
-          "id": "1",
-          "name": "Redis"
+          "id": "90xXjCwAdBRlbI1G",
+          "name": "Redis account 3"
         }
-      }
+      },
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -75,7 +102,12 @@
       "name": "Process Webhook Data",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
-      "position": [450, 300]
+      "position": [
+        1776,
+        432
+      ],
+      "id": "d5466317-5716-41ab-afa1-51fd052c8e38",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -98,19 +130,25 @@
               "value": "={{$json.queue_length || 'unknown'}}"
             }
           ]
-        }
+        },
+        "options": {}
       },
       "name": "Success Response",
       "type": "n8n-nodes-base.set",
       "typeVersion": 1,
-      "position": [1250, 400]
+      "position": [
+        2576,
+        528
+      ],
+      "id": "4840786b-df6c-4113-8dff-925397ad06ba",
+      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "triggerTimes": {
-          "item": [
+        "rule": {
+          "interval": [
             {
-              "mode": "everyMinute"
+              "field": "seconds"
             }
           ]
         }
@@ -118,9 +156,14 @@
       "name": "Schedule Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1,
-      "position": [50, 500]
+      "position": [
+        1376,
+        624
+      ],
+      "id": "ae74348c-d030-4b9b-b4a5-01bfae63c7b0"
     }
   ],
+  "pinData": {},
   "connections": {
     "Document Upload Webhook": {
       "main": [
@@ -210,5 +253,17 @@
         ]
       ]
     }
-  }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "8deb2fec-4a5a-4eb5-9f36-8c7c3958dae6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9864951ea4472b9d0ea716c66bb2527efb446aa6309ab9f74077ab1db432402b"
+  },
+  "id": "LVShTSoyja7c2ZtT",
+  "tags": []
+}
 }
