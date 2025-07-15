@@ -46,14 +46,15 @@ services:
       dockerfile: agents/ocr/Dockerfile
     container_name: doc-intel-ocr
     volumes:
-      - ./data:/data:ro
-      - ./indices:/indices
-      - ./logs:/app/logs
+        - ./data:/data:ro          # Wichtig: Mount /data
+        - ./indices:/indices
+        - ./logs:/app/logs
     environment:
       REDIS_URL: redis://redis:6379
       TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
       PYTHONPATH: /app
       LOG_PATH: /app/logs
+      DATA_PATH: /data           # Neu: Expliziter Pfad
       ENABLE_PII_REMOVAL: ${ENABLE_PII_REMOVAL:-true}
       PYTHONUNBUFFERED: 1
     depends_on:
