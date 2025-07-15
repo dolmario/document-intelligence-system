@@ -1,94 +1,82 @@
-version: '3.8'
-
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: doc-intel-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - doc_network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    restart: unless-stopped
-
-  postgres:
-    image: postgres:16-alpine
-    container_name: doc-intel-postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-docintell}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-docintell123}
-      POSTGRES_DB: ${POSTGRES_DB:-document_intelligence}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - doc_network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-docintell} -d ${POSTGRES_DB:-document_intelligence}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-    restart: unless-stopped
-
-
+  # OCR Agent mit korrekten Volumes und Umgebungsvariablen
   ocr_agent:
     build:
       context: .
       dockerfile: agents/ocr/Dockerfile
     container_name: doc-intel-ocr
     volumes:
-        - ./data:/data:ro          # Wichtig: Mount /data
-        - ./indices:/indices
-        - ./logs:/app/logs
-    environment:
-      REDIS_URL: redis://redis:6379
-      TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
-      PYTHONPATH: /app
-      LOG_PATH: /app/logs
-      DATA_PATH: /data           # Neu: Expliziter Pfad
-      ENABLE_PII_REMOVAL: ${ENABLE_PII_REMOVAL:-true}
-      PYTHONUNBUFFERED: 1
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - doc_network
-    restart: unless-stopped
-
-  indexer:
-    build:
-      context: .
-      dockerfile: agents/indexer/Dockerfile
-    container_name: doc-intel-indexer
-    volumes:
-      - ./data:/data:ro
+      - ./data:/data:ro              # WICHTIG: /data mount für Dateizugriff
       - ./indices:/indices
       - ./logs:/app/logs
     environment:
-      REDIS_URL: redis://redis:6379
-      INDEX_FORMAT: markdown_json
-      PII_REMOVAL: strict
-      LANGUAGE: de
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
       PYTHONPATH: /app
       LOG_PATH: /app/logs
-      INDEX_PATH: /indices
+      DATA_PATH: /data               # Expliziter Data Path
+      ENABLE_PII_REMOVAL: ${ENABLE_PII_REMOVAL:-true}
       PYTHONUNBUFFERED: 1
+      REDIS_DECODE_RESPONSES: ${REDIS_DECODE_RESPONSES:-true}
     depends_on:
       redis:
         condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import redis; r=redis.from_url('redis://redis:6379'); r.ping()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
+  # N8N mit korrekter DB-Konfiguration
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: doc-intel-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      # Datenbank
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-document_intelligence}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-docintell}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-docintell123}
+      # Auth
+      N8N_BASIC_AUTH_ACTIVE: true
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-n8n-encryption-key}
+      # Network
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/webhook/doc-webhook}
+      # Features
+      N8N_RUNNERS_ENABLED: ${N8N_RUNNERS_ENABLED:-true}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Europe/Berlin}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+      - ./data:/data:ro              # Zugriff auf Dateien
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - doc_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Search API mit besserer Konfiguration
   search_api:
     build:
       context: .
@@ -100,14 +88,16 @@ services:
       - ./indices:/indices:ro
       - ./logs:/app/logs
     environment:
-      REDIS_URL: redis://redis:6379
-      OLLAMA_URL: http://ollama:11434
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      OLLAMA_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       PYTHONPATH: /app
       LOG_PATH: /app/logs
       INDEX_PATH: /indices
       CORS_ALLOW_ORIGIN: ${CORS_ALLOW_ORIGIN:-http://localhost:8080,http://localhost:5678}
       USER_AGENT: ${USER_AGENT:-DocumentIntelligenceSystem/1.0}
       PYTHONUNBUFFERED: 1
+      MIN_RELEVANCE_SCORE: ${MIN_RELEVANCE_SCORE:-0.3}
+      ENABLE_PII_REMOVAL: ${ENABLE_PII_REMOVAL:-true}
     depends_on:
       redis:
         condition: service_healthy
@@ -122,88 +112,6 @@ services:
       timeout: 5s
       retries: 5
 
-  n8n:
-    image: docker.n8n.io/n8nio/n8n
-    container_name: doc-intel-n8n
-    ports:
-      - "5678:5678"
-    environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-document_intelligence}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER:-docintell}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-docintell123}
-      N8N_BASIC_AUTH_ACTIVE: true
-      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-n8n-encryption-key}
-      N8N_HOST: 0.0.0.0
-      N8N_PORT: 5678
-      N8N_PROTOCOL: http
-      WEBHOOK_URL: http://localhost:5678/webhook/doc-webhook
-      GENERIC_TIMEZONE: Europe/Berlin
-      N8N_RUNNERS_ENABLED: true
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./n8n/workflows:/workflows
-      - ./data:/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - doc_network
-    restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: doc-intel-ollama
-    ports:
-      - "11434:11434"
-    environment:
-      OLLAMA_KEEP_ALIVE: 24h
-      OLLAMA_HOST: 0.0.0.0
-      OLLAMA_DEBUG: INFO
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - doc_network
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: doc-intel-webui
-    ports:
-      - "8080:8080"
-    environment:
-      OLLAMA_BASE_URL: http://ollama:11434
-      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-secret-key-change-me}
-      WEBUI_AUTH: false
-      ENABLE_SIGNUP: true
-      DEFAULT_MODELS: mistral,llama3,phi
-    volumes:
-      - open_webui_data:/app/backend/data
-    depends_on:
-      ollama:
-        condition: service_started
-    networks:
-      - doc_network
-    restart: unless-stopped
-
-networks:
-  doc_network:
-    driver: bridge
-
-volumes:
-  redis_data:
-  n8n_data:
-  ollama_data:
-  open_webui_data:
-  postgres_data:
+  # Watchdog deaktiviert - N8N übernimmt diese Funktion
+  # watchdog:
+  #   profiles: ["disabled"]  # Nur bei Bedarf aktivieren
