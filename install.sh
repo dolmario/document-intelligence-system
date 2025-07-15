@@ -36,12 +36,21 @@ fi
 
 # 4. Docker Build & Start
 echo "4️⃣ Building Docker containers..."
-docker compose build
+docker compose build || {
+    echo "❌ Build failed. Checking for common issues..."
+    echo "Tip: Make sure Docker is running"
+    exit 1
+}
 
 echo "5️⃣ Starting services..."
 # Start in korrekter Reihenfolge
-docker compose up -d redis postgres
-sleep 10  # Warte auf Datenbanken
+docker compose up -d redis postgres || {
+    echo "❌ Failed to start databases"
+    exit 1
+}
+
+echo "Waiting for databases to be ready..."
+sleep 15  # Databases need more time to initialize
 
 docker compose up -d ocr_agent indexer
 sleep 5
