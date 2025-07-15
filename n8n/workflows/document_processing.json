@@ -1,37 +1,134 @@
 {
-  "name": "Document Processing Pipeline",
+  "name": "Universal Document Intelligence Intake",
   "nodes": [
     {
       "parameters": {
-        "path": "doc-webhook",
-        "httpMethod": "POST",
-        "responseMode": "onReceived",
-        "options": {
-          "allowedOrigins": "*"
-        }
+        "events": [
+          "file:created",
+          "file:updated"
+        ],
+        "additionalFields": {}
       },
-      "name": "Document Webhook",
+      "name": "Google Drive Trigger",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [250, 100],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "1",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "events": [
+          "file_added"
+        ]
+      },
+      "name": "Dropbox Trigger",
+      "type": "n8n-nodes-base.dropboxTrigger",
+      "typeVersion": 1,
+      "position": [250, 250],
+      "credentials": {
+        "dropboxApi": {
+          "id": "2",
+          "name": "Dropbox account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "document-upload",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "name": "File Upload Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [240, 300],
-      "webhookId": "document-webhook-001"
+      "position": [250, 400],
+      "webhookId": "document-upload-webhook"
+    },
+    {
+      "parameters": {
+        "path": "/watch/*/",
+        "responseMode": "onReceived"
+      },
+      "name": "Local Folder Watcher",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 550]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Normalisiere Eingangsdaten von verschiedenen Quellen\nconst items = [];\n\nfor (const item of $input.all()) {\n  let fileData = {};\n  \n  // Google Drive\n  if (item.json.mimeType) {\n    fileData = {\n      source: 'google_drive',\n      fileId: item.json.id,\n      fileName: item.json.name,\n      mimeType: item.json.mimeType,\n      fileSize: item.json.size,\n      downloadUrl: item.json.webContentLink,\n      createdTime: item.json.createdTime,\n      modifiedTime: item.json.modifiedTime\n    };\n  }\n  // Dropbox\n  else if (item.json.path_lower) {\n    fileData = {\n      source: 'dropbox',\n      fileId: item.json.id,\n      fileName: item.json.name,\n      path: item.json.path_lower,\n      fileSize: item.json.size,\n      modifiedTime: item.json.client_modified\n    };\n  }\n  // File Upload\n  else if (item.binary) {\n    const binaryData = item.binary.data;\n    fileData = {\n      source: 'upload',\n      fileName: binaryData.fileName,\n      mimeType: binaryData.mimeType,\n      fileSize: binaryData.fileSize,\n      data: binaryData.data\n    };\n  }\n  // Local Folder\n  else if (item.json.filePath) {\n    fileData = {\n      source: 'local',\n      fileName: item.json.fileName,\n      filePath: item.json.filePath,\n      fileSize: item.json.fileSize\n    };\n  }\n  \n  // Füge Metadaten hinzu\n  fileData.processId = `${fileData.source}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;\n  fileData.receivedAt = new Date().toISOString();\n  \n  items.push({json: fileData});\n}\n\nreturn items;"
+      },
+      "name": "Normalize Input Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [600, 300]
     },
     {
       "parameters": {
         "conditions": {
           "string": [
             {
-              "value1": "={{$json.event}}",
+              "value1": "={{$json.source}}",
               "operation": "equals",
-              "value2": "file_added"
+              "value2": "google_drive"
             }
           ]
         }
       },
-      "name": "Check Event Type",
+      "name": "Is Google Drive?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
-      "position": [440, 300]
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": "={{$json.fileId}}"
+      },
+      "name": "Download from Google",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 2,
+      "position": [1000, 100]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Hole Dateiinhalt basierend auf Quelle\nconst items = [];\n\nfor (const item of $input.all()) {\n  const source = item.json.source;\n  let fileContent = null;\n  let mimeType = item.json.mimeType || 'application/octet-stream';\n  \n  if (source === 'upload') {\n    // Daten sind bereits im Binary-Format\n    items.push(item);\n  } else if (source === 'local') {\n    // Für lokale Dateien würde man hier den Inhalt lesen\n    // In der Praxis würde dies über einen Agent erfolgen\n    items.push({\n      json: item.json,\n      binary: {\n        data: {\n          fileName: item.json.fileName,\n          mimeType: mimeType,\n          data: 'BASE64_ENCODED_CONTENT'\n        }\n      }\n    });\n  } else {\n    // Andere Quellen werden durch spezifische Nodes behandelt\n    items.push(item);\n  }\n}\n\nreturn items;"
+      },
+      "name": "Process Other Sources",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Konvertiere zu Base64 falls nötig und erstelle OCR Task\nconst items = [];\n\nfor (const item of $input.all()) {\n  const fileData = item.json;\n  let base64Content = '';\n  \n  // Hole Base64 Content\n  if (item.binary && item.binary.data) {\n    base64Content = item.binary.data.data;\n  }\n  \n  // Erstelle OCR Task\n  const ocrTask = {\n    task_id: fileData.processId,\n    file_name: fileData.fileName,\n    mime_type: fileData.mimeType || 'application/octet-stream',\n    source: fileData.source,\n    file_content: base64Content,\n    task_type: determineTaskType(fileData.fileName, fileData.mimeType),\n    priority: 5,\n    created_at: new Date().toISOString(),\n    metadata: {\n      original_source: fileData.source,\n      file_size: fileData.fileSize,\n      received_at: fileData.receivedAt\n    }\n  };\n  \n  items.push({json: ocrTask});\n}\n\nfunction determineTaskType(fileName, mimeType) {\n  const ocrExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif'];\n  const textExtensions = ['.txt', '.md', '.csv', '.json'];\n  \n  const ext = fileName.toLowerCase().substring(fileName.lastIndexOf('.'));\n  \n  if (ocrExtensions.includes(ext)) {\n    return 'ocr';\n  } else if (textExtensions.includes(ext)) {\n    return 'text';\n  } else if (mimeType && mimeType.includes('image')) {\n    return 'ocr';\n  } else {\n    return 'index';\n  }\n}\n\nreturn items;"
+      },
+      "name": "Create OCR Task",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "push",
+        "list": "processing_queue",
+        "messageData": "={{JSON.stringify($json)}}"
+      },
+      "name": "Push to Redis Queue",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1400, 300],
+      "credentials": {
+        "redis": {
+          "id": "3",
+          "name": "Redis"
+        }
+      }
     },
     {
       "parameters": {
@@ -39,69 +136,15 @@
           "string": [
             {
               "name": "status",
-              "value": "received"
-            },
-            {
-              "name": "event",
-              "value": "={{$json.event}}"
-            },
-            {
-              "name": "file_path",
-              "value": "={{$json.file_path}}"
-            },
-            {
-              "name": "timestamp",
-              "value": "={{new Date().toISOString()}}"
-            }
-          ]
-        }
-      },
-      "name": "Format Response",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 1,
-      "position": [640, 200]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://search_api:8001/webhook/process",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "event",
-              "value": "={{$json.event}}"
-            },
-            {
-              "name": "file_path",
-              "value": "={{$json.file_path}}"
-            },
-            {
-              "name": "source",
-              "value": "n8n_webhook"
-            }
-          ]
-        },
-        "options": {
-          "timeout": 30000
-        }
-      },
-      "name": "Forward to Search API",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 3,
-      "position": [640, 400]
-    },
-    {
-      "parameters": {
-        "values": {
-          "string": [
-            {
-              "name": "processing_status",
-              "value": "queued"
+              "value": "success"
             },
             {
               "name": "message",
-              "value": "Document processing started"
+              "value": "Document queued for processing"
+            },
+            {
+              "name": "task_id",
+              "value": "={{$json.task_id}}"
             }
           ]
         }
@@ -109,65 +152,117 @@
       "name": "Success Response",
       "type": "n8n-nodes-base.set",
       "typeVersion": 1,
-      "position": [840, 300]
-    },
-    {
-      "parameters": {
-        "values": {
-          "string": [
-            {
-              "name": "error",
-              "value": "Event type not supported"
-            },
-            {
-              "name": "received_event",
-              "value": "={{$json.event}}"
-            }
-          ]
-        }
-      },
-      "name": "Error Response",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 1,
-      "position": [640, 600]
+      "position": [1600, 300]
     }
   ],
   "connections": {
-    "Document Webhook": {
+    "Google Drive Trigger": {
       "main": [
         [
           {
-            "node": "Check Event Type",
+            "node": "Normalize Input Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Check Event Type": {
+    "Dropbox Trigger": {
       "main": [
         [
           {
-            "node": "Format Response",
+            "node": "Normalize Input Data",
             "type": "main",
             "index": 0
-          },
+          }
+        ]
+      ]
+    },
+    "File Upload Webhook": {
+      "main": [
+        [
           {
-            "node": "Forward to Search API",
+            "node": "Normalize Input Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local Folder Watcher": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input Data": {
+      "main": [
+        [
+          {
+            "node": "Is Google Drive?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Google Drive?": {
+      "main": [
+        [
+          {
+            "node": "Download from Google",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Error Response",
+            "node": "Process Other Sources",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Forward to Search API": {
+    "Download from Google": {
+      "main": [
+        [
+          {
+            "node": "Create OCR Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Other Sources": {
+      "main": [
+        [
+          {
+            "node": "Create OCR Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create OCR Task": {
+      "main": [
+        [
+          {
+            "node": "Push to Redis Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Push to Redis Queue": {
       "main": [
         [
           {
@@ -178,14 +273,5 @@
         ]
       ]
     }
-  },
-  "active": true,
-  "settings": {
-    "saveManualExecutions": true,
-    "callerPolicy": "workflowsFromSameOwner"
-  },
-  "versionId": "1",
-  "meta": {
-    "instanceId": "document-intelligence-system"
   }
 }
