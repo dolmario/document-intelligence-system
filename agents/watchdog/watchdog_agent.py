@@ -26,8 +26,15 @@ class DocumentWatchdog(FileSystemEventHandler):
         self.loop = asyncio.new_event_loop()
         
     async def connect_redis(self):
-        self.redis_client = await redis.from_url(self.redis_url)
-        logger.info("Redis-Verbindung hergestellt")
+        """Verbinde mit Redis mit konsistenten Einstellungen"""
+        # KRITISCH: Gleiche Konfiguration wie OCR Agent
+        self.redis_client = await redis.from_url(
+            self.redis_url,
+            decode_responses=True,  # ✅ Konsistent mit OCR Agent
+            encoding='utf-8',       # ✅ UTF-8 Encoding
+            encoding_errors='strict' # ✅ Strikte Fehlerbehandlung
+        )
+        logger.info("Redis-Verbindung hergestellt mit decode_responses=True")
     
     def on_created(self, event: FileSystemEvent):
         if not event.is_directory:
@@ -42,6 +49,7 @@ class DocumentWatchdog(FileSystemEventHandler):
             self.loop.run_until_complete(self.mark_file_deleted(event.src_path))
     
     async def process_new_file(self, filepath: str):
+        """Verarbeite neue Datei mit korrektem JSON Encoding"""
         try:
             ext = get_file_extension(filepath)
             if ext not in self.supported_extensions:
@@ -50,10 +58,12 @@ class DocumentWatchdog(FileSystemEventHandler):
             
             file_hash = await self.calculate_file_hash(filepath)
             
+            # Prüfe ob Datei bereits verarbeitet wurde
             if filepath in self.file_cache and self.file_cache[filepath] == file_hash:
                 logger.debug(f"Datei bereits verarbeitet: {filepath}")
                 return
             
+            # Erstelle Task-Objekt
             task = {
                 'task_id': hashlib.sha256(f"{filepath}_{datetime.now().isoformat()}".encode()).hexdigest(),
                 'file_path': str(filepath),
@@ -62,16 +72,22 @@ class DocumentWatchdog(FileSystemEventHandler):
                 'created_at': datetime.now().isoformat()
             }
             
-            await self.redis_client.lpush('processing_queue', json.dumps(task))
+            # Serialisiere zu JSON und sende an Redis
+            json_task = json.dumps(task, ensure_ascii=False)
+            logger.debug(f"Sending task to Redis: {json_task[:100]}...")
             
+            await self.redis_client.lpush('processing_queue', json_task)
+            
+            # Update Cache
             self.file_cache[filepath] = file_hash
             
             logger.info(f"Neue Datei zur Verarbeitung hinzugefügt: {filepath}")
             
         except Exception as e:
-            logger.error(f"Fehler beim Verarbeiten von {filepath}: {str(e)}")
+            logger.error(f"Fehler beim Verarbeiten von {filepath}: {str(e)}", exc_info=True)
     
     async def check_file_changes(self, filepath: str):
+        """Prüfe ob Datei geändert wurde"""
         try:
             new_hash = await self.calculate_file_hash(filepath)
             
@@ -80,24 +96,28 @@ class DocumentWatchdog(FileSystemEventHandler):
                 await self.process_new_file(filepath)
                 
         except Exception as e:
-            logger.error(f"Fehler beim Prüfen von Änderungen: {str(e)}")
+            logger.error(f"Fehler beim Prüfen von Änderungen: {str(e)}", exc_info=True)
     
     async def mark_file_deleted(self, filepath: str):
+        """Markiere Datei als gelöscht"""
         try:
             if filepath in self.file_cache:
                 del self.file_cache[filepath]
                 
-            await self.redis_client.lpush('deletion_queue', json.dumps({
+            deletion_info = {
                 'filepath': filepath,
                 'deleted_at': datetime.now().isoformat()
-            }))
+            }
+            
+            await self.redis_client.lpush('deletion_queue', json.dumps(deletion_info))
             
             logger.info(f"Datei als gelöscht markiert: {filepath}")
             
         except Exception as e:
-            logger.error(f"Fehler beim Markieren als gelöscht: {str(e)}")
+            logger.error(f"Fehler beim Markieren als gelöscht: {str(e)}", exc_info=True)
     
     async def calculate_file_hash(self, filepath: str) -> str:
+        """Berechne SHA256 Hash einer Datei"""
         hash_sha256 = hashlib.sha256()
         
         try:
@@ -110,15 +130,20 @@ class DocumentWatchdog(FileSystemEventHandler):
             return ""
     
     def start(self):
+        """Starte Watchdog mit Event Loop"""
         asyncio.set_event_loop(self.loop)
         self.loop.run_until_complete(self.connect_redis())
         
         observer = Observer()
         
+        # Initialer Scan aller existierenden Dateien
         for path in self.watch_paths:
             if path.exists():
                 observer.schedule(self, str(path), recursive=True)
                 logger.info(f"Überwache Verzeichnis: {path}")
+                
+                # Verarbeite existierende Dateien
+                self.loop.run_until_complete(self.scan_existing_files(path))
             else:
                 logger.warning(f"Verzeichnis existiert nicht: {path}")
         
@@ -131,8 +156,20 @@ class DocumentWatchdog(FileSystemEventHandler):
         except KeyboardInterrupt:
             observer.stop()
             logger.info("Watchdog gestoppt")
+            # Schließe Redis-Verbindung
+            self.loop.run_until_complete(self.redis_client.close())
         
         observer.join()
+    
+    async def scan_existing_files(self, directory: Path):
+        """Scanne existierende Dateien beim Start"""
+        logger.info(f"Scanne existierende Dateien in: {directory}")
+        
+        for filepath in directory.rglob('*'):
+            if filepath.is_file():
+                ext = filepath.suffix.lower().lstrip('.')
+                if ext in self.supported_extensions:
+                    await self.process_new_file(str(filepath))
 
 def main():
     import os
