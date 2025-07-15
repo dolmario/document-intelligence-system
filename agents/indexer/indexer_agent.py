@@ -10,7 +10,7 @@ from core.models import DocumentIndex
 from core.privacy import PrivacyManager
 from agents.indexer.index_generator import DSGVOCompliantIndexer
 
-logger = setup_logger('indexer_agent', 'logs/indexer.log')
+logger = setup_logger('indexer_agent', 'indexer.log')
 
 class IndexerAgent:
     def __init__(self, redis_url: str):
