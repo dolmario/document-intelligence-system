@@ -7,21 +7,23 @@ from pathlib import Path
 import json
 import logging
 import os
+import hashlib
+from datetime import datetime
+import redis.asyncio as redis
 
 from core.utils import setup_logger, config
 from services.search.search_engine import IntelligentSearchEngine
 from services.learning.learning_agent import LinkLearningAgent
 
-# FIXED: Korrigierter Logger-Aufruf ohne doppelten logs-Pfad
 logger = setup_logger('search_api', 'search_api.log')
 
 app = FastAPI(
     title="Document Intelligence Search API",
     version="1.0.0",
-    description="DSGVO-konforme Dokumentensuche mit KI-Unterstützung"
+    description="GDPR-compliant document search with AI support"
 )
 
-# FIXED: Sichere CORS-Konfiguration aus Umgebungsvariablen
+# CORS Configuration
 cors_origins = os.getenv('CORS_ALLOW_ORIGIN', 'http://localhost:8080').split(',')
 cors_credentials = os.getenv('CORS_ALLOW_CREDENTIALS', 'false').lower() == 'true'
 cors_methods = os.getenv('CORS_ALLOW_METHODS', 'GET,POST,PUT,DELETE').split(',')
@@ -35,7 +37,7 @@ app.add_middleware(
     allow_headers=cors_headers,
 )
 
-# Globale Instanzen
+# Global instances
 search_engine = None
 learning_agent = None
 
@@ -68,61 +70,69 @@ class LinkRequest(BaseModel):
     doc2_id: str
     bidirectional: bool = True
 
+class WebhookRequest(BaseModel):
+    event: str
+    file_path: str
+    source: str = "unknown"
+
 @app.on_event("startup")
 async def startup_event():
-    """Initialisiere Services beim Start"""
+    """Initialize services on startup"""
     global search_engine, learning_agent
     
-    logger.info("Starte Search API...")
+    logger.info("Starting Search API...")
     search_engine = IntelligentSearchEngine(str(config.index_path))
     learning_agent = LinkLearningAgent()
     
-    # Lade existierende Indizes
+    # Load existing indices
     await search_engine.load_indices_async()
-    logger.info("Search API bereit")
+    logger.info("Search API ready")
 
 @app.get("/")
 async def root():
-    """API Status"""
+    """API status and endpoints"""
     return {
         "service": "Document Intelligence Search API",
         "status": "running",
         "version": "1.0.0",
         "endpoints": {
-            "/search": "Dokumentensuche",
-            "/document/{doc_id}": "Dokument-Details",
-            "/suggest/{doc_id}": "Ähnliche Dokumente",
-            "/link": "Manuelle Verknüpfung",
-            "/stats": "System-Statistiken"
+            "/search": "Document search",
+            "/document/{doc_id}": "Document details",
+            "/suggest/{doc_id}": "Similar documents",
+            "/link": "Manual linking",
+            "/webhook/process": "N8N integration",
+            "/stats": "System statistics",
+            "/health": "Health check"
         }
     }
 
 @app.get("/health")
 async def health_check():
-    """Health Check Endpoint"""
+    """Health check endpoint"""
     return {
         "status": "healthy",
         "search_engine_loaded": search_engine is not None,
-        "indices_count": len(search_engine.indices) if search_engine else 0
+        "indices_count": len(search_engine.indices) if search_engine else 0,
+        "timestamp": datetime.now().isoformat()
     }
 
 @app.post("/search", response_model=List[SearchResult])
 async def search_documents(request: SearchRequest):
-    """Intelligente Dokumentensuche"""
+    """Intelligent document search"""
     try:
-        logger.info(f"Suche nach: {request.query}")
+        logger.info(f"Search query: {request.query}")
         
-        # Führe Suche durch
+        # Perform search
         results = await search_engine.search_async(
             request.query,
             filters=request.filters,
             limit=request.limit
         )
         
-        # Konvertiere zu Response-Format
+        # Convert to response format
         search_results = []
         for doc, score in results[:request.limit]:
-            # Erstelle Snippet
+            # Create snippet
             snippet = ""
             for section in doc.sections[:2]:
                 snippet += section.get('content', '')[:200] + "... "
@@ -137,7 +147,7 @@ async def search_documents(request: SearchRequest):
                 file_path=doc.metadata.get('path')
             ))
         
-        # Learning: Speichere Suchanfrage
+        # Learning: Record search pattern
         if results:
             clicked_ids = [r[0].doc_id for r in results[:5]]
             await learning_agent.learn_from_search_async(request.query, clicked_ids)
@@ -145,18 +155,18 @@ async def search_documents(request: SearchRequest):
         return search_results
         
     except Exception as e:
-        logger.error(f"Suchfehler: {str(e)}")
+        logger.error(f"Search error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/document/{doc_id}", response_model=DocumentDetail)
 async def get_document(doc_id: str):
-    """Hole Dokument-Details"""
+    """Get document details"""
     try:
         doc = await search_engine.get_document_async(doc_id)
         if not doc:
-            raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
+            raise HTTPException(status_code=404, detail="Document not found")
         
-        # Vollständiger Inhalt
+        # Full content
         full_content = "\n\n".join([s.get('content', '') for s in doc.sections])
         
         return DocumentDetail(
@@ -171,27 +181,27 @@ async def get_document(doc_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Fehler beim Abrufen von Dokument {doc_id}: {str(e)}")
+        logger.error(f"Error retrieving document {doc_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/suggest/{doc_id}", response_model=List[SearchResult])
 async def suggest_similar(doc_id: str, limit: int = 10):
-    """Schlage ähnliche Dokumente vor"""
+    """Suggest similar documents"""
     try:
-        # Hole Vorschläge vom Learning Agent
+        # Get suggestions from learning agent
         suggestions = learning_agent.suggest_links(doc_id)
         
-        # Erweitere mit semantischen Links
+        # Extend with semantic links
         doc = await search_engine.get_document_async(doc_id)
         if doc:
             for link_id, score in doc.semantic_links.items():
                 if link_id not in suggestions:
                     suggestions[link_id] = score
         
-        # Sortiere und limitiere
+        # Sort and limit
         sorted_suggestions = sorted(suggestions.items(), key=lambda x: x[1], reverse=True)[:limit]
         
-        # Konvertiere zu SearchResults
+        # Convert to SearchResults
         results = []
         for suggested_id, score in sorted_suggestions:
             suggested_doc = await search_engine.get_document_async(suggested_id)
@@ -210,12 +220,12 @@ async def suggest_similar(doc_id: str, limit: int = 10):
         return results
         
     except Exception as e:
-        logger.error(f"Fehler bei Vorschlägen für {doc_id}: {str(e)}")
+        logger.error(f"Error getting suggestions for {doc_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/link")
 async def create_manual_link(request: LinkRequest):
-    """Erstelle manuelle Verknüpfung zwischen Dokumenten"""
+    """Create manual link between documents"""
     try:
         learning_agent.add_manual_link(
             request.doc1_id,
@@ -223,11 +233,11 @@ async def create_manual_link(request: LinkRequest):
             request.bidirectional
         )
         
-        # Aktualisiere auch die Indizes
+        # Update indices
         await search_engine.update_semantic_link_async(
             request.doc1_id,
             request.doc2_id,
-            1.0  # Maximale Ähnlichkeit für manuelle Links
+            1.0  # Maximum similarity for manual links
         )
         
         if request.bidirectional:
@@ -237,19 +247,53 @@ async def create_manual_link(request: LinkRequest):
                 1.0
             )
         
-        return {"status": "success", "message": "Verknüpfung erstellt"}
+        return {"status": "success", "message": "Link created"}
         
     except Exception as e:
-        logger.error(f"Fehler beim Erstellen der Verknüpfung: {str(e)}")
+        logger.error(f"Error creating link: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/webhook/process")
+async def process_webhook(request: WebhookRequest):
+    """Webhook endpoint for N8N integration"""
+    try:
+        logger.info(f"Webhook received: {request.event} for {request.file_path}")
+        
+        if request.event == "file_added":
+            # Create OCR task
+            task = {
+                'task_id': hashlib.sha256(f"{request.file_path}_{datetime.now().isoformat()}".encode()).hexdigest(),
+                'file_path': request.file_path,
+                'task_type': 'ocr',
+                'priority': 5,
+                'created_at': datetime.now().isoformat(),
+                'source': request.source
+            }
+            
+            # Add to Redis queue
+            redis_client = await redis.from_url(config.redis_url)
+            await redis_client.lpush('processing_queue', json.dumps(task))
+            await redis_client.close()
+            
+            return {
+                "status": "success",
+                "message": "Task created",
+                "task_id": task['task_id']
+            }
+        
+        return {"status": "ignored", "message": f"Unknown event: {request.event}"}
+        
+    except Exception as e:
+        logger.error(f"Webhook error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/stats")
 async def get_statistics():
-    """System-Statistiken"""
+    """System statistics"""
     try:
         total_docs = len(search_engine.indices)
         
-        # Berechne weitere Stats
+        # Calculate statistics
         total_keywords = sum(len(doc.keywords) for doc in search_engine.indices.values())
         total_links = sum(len(doc.references) for doc in search_engine.indices.values())
         
@@ -264,11 +308,12 @@ async def get_statistics():
             "total_links": total_links,
             "categories": categories,
             "index_path": str(config.index_path),
-            "indices_loaded": total_docs > 0
+            "indices_loaded": total_docs > 0,
+            "timestamp": datetime.now().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"Fehler bei Statistiken: {str(e)}")
+        logger.error(f"Error getting statistics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
