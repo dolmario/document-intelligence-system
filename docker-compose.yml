@@ -126,25 +126,29 @@ services:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
       DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-document_intelligence}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER:-docintell}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-docintell123}
-      N8N_BASIC_AUTH_ACTIVE: true
-      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-n8n-encryption-key}
+      DB_POSTGRESDB_DATABASE: document_intelligence
+      DB_POSTGRESDB_USER: docintell
+      DB_POSTGRESDB_PASSWORD: docintell123
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: admin
+      N8N_BASIC_AUTH_PASSWORD: changeme
+      N8N_ENCRYPTION_KEY: n8n-encryption-key
       N8N_HOST: 0.0.0.0
       N8N_PORT: 5678
       N8N_PROTOCOL: http
-      WEBHOOK_URL: http://localhost:5678/webhook/doc-webhook
+      WEBHOOK_URL: http://n8n:5678/
       GENERIC_TIMEZONE: Europe/Berlin
-      N8N_RUNNERS_ENABLED: true
+      N8N_RUNNERS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows
       - ./data:/data
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - doc_network
     restart: unless-stopped
@@ -163,7 +167,6 @@ services:
     networks:
       - doc_network
     restart: unless-stopped
-    # GPU support - entferne diese Zeilen wenn keine GPU vorhanden
     deploy:
       resources:
         reservations:
@@ -197,6 +200,10 @@ networks:
 
 volumes:
   redis_data:
+  n8n_data:
+  ollama_data:
+  open_webui_data:
+  postgres_data:
   n8n_data:
   ollama_data:
   open_webui_data:
