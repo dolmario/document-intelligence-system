@@ -1,12 +1,32 @@
-# Fixed versions to avoid conflicts
-numpy==1.24.3
-asyncpg==0.29.0
-pytesseract==0.3.10
-Pillow==10.1.0
-pdf2image==1.16.3
-python-docx==1.1.0
-pandas==2.0.3
-openpyxl==3.1.2
-beautifulsoup4==4.12.2
-aiofiles==23.2.1
-lxml==4.9.3
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    tesseract-ocr-deu \
+    tesseract-ocr-eng \
+    poppler-utils \
+    libpq-dev \
+    gcc g++ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies with specific versions to avoid conflicts
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install numpy first to avoid ABI issues
+RUN pip install --no-cache-dir numpy==1.24.3
+
+# Copy and install requirements
+COPY agents/ocr/requirements.v2.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY agents/ocr/ocr_agent_v2.py ocr_agent.py
+
+# Create necessary directories
+RUN mkdir -p /app/logs /data
+
+CMD ["python", "-u", "ocr_agent.py"]
