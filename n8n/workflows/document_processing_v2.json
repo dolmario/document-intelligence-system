@@ -1,0 +1,289 @@
+{
+  "name": "Document Processing V2",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "doc-upload",
+        "responseMode": "responseNode",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "name": "Document Upload",
+      "type": "n8n-nodes-base.webhook",
+      "position": [250, 300],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), '{{ $json.fileName }}', '{{ $json.fileType }}', '{{ JSON.stringify($json.metadata) }}'::jsonb) RETURNING id",
+        "additionalFields": {}
+      },
+      "name": "Save to DB",
+      "type": "n8n-nodes-base.postgres",
+      "position": [450, 300],
+      "typeVersion": 1,
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_queue (document_id, task_type, priority) VALUES ('{{ $json.id }}', 'extract', 5)"
+      },
+      "name": "Queue for Processing",
+      "type": "n8n-nodes-base.postgres",
+      "position": [650, 300],
+      "typeVersion": 1,
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "hour": 3,
+              "minute": 0
+            }
+          ]
+        }
+      },
+      "name": "Night Job Trigger",
+      "type": "n8n-nodes-base.cron",
+      "position": [250, 500],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id WHERE c.status = 'precleaned' AND d.status != 'deleted' LIMIT 100"
+      },
+      "name": "Get Chunks for Enhancement",
+      "type": "n8n-nodes-base.postgres",
+      "position": [450, 500],
+      "typeVersion": 1,
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
+            },
+            {
+              "name": "prompt",
+              "value": "Verbessere den folgenden Text. Korrigiere Rechtschreibfehler, verbessere die Struktur, aber behalte alle wichtigen Informationen:\\n\\n{{ $json.content }}\\n\\nVerbesserte Version:"
+            },
+            {
+              "name": "stream",
+              "value": false
+            }
+          ]
+        }
+      },
+      "name": "LLM Enhancement",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [650, 500],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE chunks SET content = '{{ $json.response }}', status = 'enhanced', enhanced_at = NOW() WHERE id = '{{ $json.id }}'"
+      },
+      "name": "Save Enhanced",
+      "type": "n8n-nodes-base.postgres",
+      "position": [850, 500],
+      "typeVersion": 1,
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.content }}"
+            }
+          ]
+        }
+      },
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1050, 500],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "url": "http://qdrant:6333/collections/documents/points",
+        "method": "PUT",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "points",
+              "value": "[{\"id\": \"{{ $json.id }}\", \"vector\": {{ JSON.stringify($json.embedding) }}, \"payload\": {\"chunk_id\": \"{{ $json.id }}\"}}]"
+            }
+          ]
+        }
+      },
+      "name": "Store in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1250, 500],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "success"
+            },
+            {
+              "name": "document_id",
+              "value": "={{ $node['Save to DB'].json.id }}"
+            }
+          ]
+        }
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.set",
+      "position": [850, 300],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Document Upload": {
+      "main": [
+        [
+          {
+            "node": "Save to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to DB": {
+      "main": [
+        [
+          {
+            "node": "Queue for Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue for Processing": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Night Job Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Chunks for Enhancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Chunks for Enhancement": {
+      "main": [
+        [
+          {
+            "node": "LLM Enhancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Enhancement": {
+      "main": [
+        [
+          {
+            "node": "Save Enhanced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Enhanced": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding": {
+      "main": [
+        [
+          {
+            "node": "Store in Qdrant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
