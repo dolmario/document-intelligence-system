@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -13,14 +14,31 @@ import asyncpg
 import pytesseract
 from PIL import Image
 import pdf2image
-from docx import Document as DocxDocument
-import pandas as pd
+
+# Optional imports with fallbacks
+try:
+    from docx import Document as DocxDocument
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+    logger.warning("python-docx not available - DOCX support disabled")
+
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+    logger.warning("pandas not available - Excel/CSV support limited")
+
 import email
 from email import policy
 from email.parser import BytesParser
 import zipfile
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger('ocr_agent')
 
 
