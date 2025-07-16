@@ -1,108 +1,52 @@
 #!/bin/bash
-# install.sh - Einfache Installation die sofort funktioniert
-
 set -e
 
-echo "📦 Document Intelligence System - Installation"
-echo "============================================="
+echo "📦 Document Intelligence System V2 - Installation"
+echo "=============================================="
 
-# 1. Basis-Setup
-echo "1️⃣ Setup environment..."
+# 1. Create directories
+echo "Creating directories..."
+mkdir -p data logs n8n/workflows
+touch data/.gitkeep logs/.gitkeep
+
+# 2. Copy env file
 if [ ! -f .env ]; then
     cp .env.example .env
-    echo "✅ Created .env from template"
+    echo "✅ Created .env - Please edit with your settings"
 else
-    echo "✅ .env already exists"
+    echo "✅ .env exists"
 fi
 
-# 2. Verzeichnisse erstellen
-echo "2️⃣ Creating directories..."
-mkdir -p data indices/{json,markdown} logs n8n/workflows
-touch data/.gitkeep indices/.gitkeep logs/.gitkeep
-echo "✅ Directories created"
+# 3. Build and start
+echo "Building containers..."
+docker compose build
 
-# 3. Python venv (optional, für lokale Tests)
-if command -v python3 >/dev/null 2>&1; then
-    echo "3️⃣ Setting up Python environment..."
-    if [ ! -d "venv" ]; then
-        python3 -m venv venv
-        ./venv/bin/pip install --upgrade pip
-        ./venv/bin/pip install -r requirements.txt 2>/dev/null || true
-        echo "✅ Python environment created"
-    else
-        echo "✅ Python environment exists"
-    fi
-fi
+echo "Starting services..."
+docker compose up -d
 
-# 4. Docker Build & Start
-echo "4️⃣ Building Docker containers..."
-docker compose build || {
-    echo "❌ Build failed. Checking for common issues..."
-    echo "Tip: Make sure Docker is running"
-    exit 1
-}
+# 4. Wait for services
+echo "Waiting for services to be ready..."
+sleep 20
 
-echo "5️⃣ Starting services..."
-# Start in korrekter Reihenfolge
-docker compose up -d redis postgres || {
-    echo "❌ Failed to start databases"
-    exit 1
-}
+# 5. Initialize Ollama model
+echo "Loading default model (mistral)..."
+docker exec doc-intel-ollama ollama pull mistral || echo "Model loading can be done later"
 
-echo "Waiting for databases to be ready..."
-sleep 15  # Databases need more time to initialize
-
-docker compose up -d ocr_agent indexer
-sleep 5
-
-docker compose up -d search_api n8n ollama open-webui
-sleep 10
-
-# 5. Status Check
-echo "6️⃣ Checking services..."
-docker compose ps
-
-# 6. Test-Dokument erstellen
-echo "7️⃣ Creating test document..."
-cat > data/welcome.txt << 'EOF'
-Welcome to Document Intelligence System!
-=======================================
-
-This is a test document to verify the system is working.
-
-Features:
-- Automatic OCR processing
-- GDPR-compliant indexing  
-- Intelligent search
-- N8N workflow automation
-
-Test data:
-Email: test@example.com
-Phone: +49 123 456789
-
-This document should be automatically processed and indexed.
-EOF
-
-echo "✅ Test document created: data/welcome.txt"
-
-# 7. Finale Ausgabe
-echo "
-============================================="
-echo "✅ INSTALLATION COMPLETE!"
-echo "============================================="
+# 6. Status
+echo ""
+echo "✅ Installation complete!"
 echo ""
 echo "🌐 Access Points:"
 echo "   • N8N Workflows:  http://localhost:5678 (admin/changeme)"
-echo "   • Search UI:      http://localhost:8080"
-echo "   • API Docs:       http://localhost:8001/docs"
+echo "   • Search API:     http://localhost:8001"
+echo "   • Open WebUI:     http://localhost:8080"
+echo "   • Qdrant:         http://localhost:6333/dashboard"
 echo ""
 echo "📝 Next Steps:"
-echo "   1. Open N8N and import workflow from n8n/workflows/"
-echo "   2. Place documents in ./data folder"
-echo "   3. Documents will be automatically processed"
+echo "   1. Change passwords in .env"
+echo "   2. Import n8n workflows from n8n/workflows/"
+echo "   3. Add documents via API or n8n"
 echo ""
-echo "🛠️ Useful Commands:"
-echo "   • View logs:     docker compose logs -f"
-echo "   • Stop system:   docker compose down"
-echo "   • Restart:       docker compose restart"
+echo "🤖 To add more models:"
+echo "   docker exec doc-intel-ollama ollama pull <model-name>"
 echo ""
