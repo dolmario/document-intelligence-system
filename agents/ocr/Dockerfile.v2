@@ -1,18 +1,12 @@
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    tesseract-ocr-deu \
-    tesseract-ocr-eng \
-    poppler-utils \
-    gcc g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY agents/ocr/requirements.v2.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY agents/ocr/ocr_agent_v2.py ocr_agent.py
-
-CMD ["python", "ocr_agent.py"]
+# Fixed versions to avoid conflicts
+numpy==1.24.3
+asyncpg==0.29.0
+pytesseract==0.3.10
+Pillow==10.1.0
+pdf2image==1.16.3
+python-docx==1.1.0
+pandas==2.0.3
+openpyxl==3.1.2
+beautifulsoup4==4.12.2
+aiofiles==23.2.1
+lxml==4.9.3
