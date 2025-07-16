@@ -1,36 +1,56 @@
-# Ignore Python cache
-__pycache__/
-*.py[cod]
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
-
-# VS Code, PyCharm etc.
-.vscode/
-.idea/
-
 # Environment
 .env
-*.env
-venv/
-venv*/ 
-.env.*
-.DS_Store
+.env.local
+.env.*.local
 
-# Logs, indices & data
-logs/
+# Data directories
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
 indices/
-data/
-*.log
 
-# Tests
-htmlcov/
-.coverage
-pytest_cache/
-tests/__pycache__/
+# N8N
+n8n/workflows/*
+!n8n/workflows/document_processing_v2.json
+n8n_data/
 
-# GitHub Actions Artifacts
-*.sarif
-coverage.xml
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Backups
+*.sql
+*.tar.gz
+*.zip
+backup/
+
+# Test files
+test_*.txt
+test_*.pdf
+
+# Sensitive
+*.pem
+*.key
+*.crt
+secrets/
