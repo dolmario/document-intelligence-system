@@ -15,20 +15,26 @@ import pytesseract
 from PIL import Image
 import pdf2image
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('ocr_agent')
+
 # Optional imports with fallbacks
 try:
     from docx import Document as DocxDocument
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
-    logger.warning("python-docx not available - DOCX support disabled")
+    logging.warning("python-docx not available - DOCX support disabled")
 
 try:
     import pandas as pd
     HAS_PANDAS = True
 except ImportError:
     HAS_PANDAS = False
-    logger.warning("pandas not available - Excel/CSV support limited")
+    logging.warning("pandas not available - Excel/CSV support limited")
 
 import email
 from email import policy
@@ -172,9 +178,15 @@ class OCRAgentV2:
         elif file_type in ['txt', 'md', 'log']:
             return self.extract_text(file_bytes.decode('utf-8', errors='ignore'))
         elif file_type in ['docx', 'doc']:
-            return await self.extract_docx(file_bytes)
+                            if HAS_DOCX:
+                    return await self.extract_docx(file_bytes)
+                else:
+                    return self.extract_text(file_bytes.decode('utf-8', errors='ignore'))
         elif file_type in ['xlsx', 'xls', 'csv']:
-            return await self.extract_spreadsheet(file_bytes, file_type)
+            if HAS_PANDAS:
+                return await self.extract_spreadsheet(file_bytes, file_type)
+            else:
+                return [{'content': f'[Spreadsheet file: {doc["original_name"]}]', 'type': 'metadata'}]
         elif file_type == 'eml':
             return await self.extract_email(file_bytes)
         elif file_type == 'html':
@@ -218,6 +230,9 @@ class OCRAgentV2:
         return [{'content': chunk, 'type': 'text', 'page': 1} for chunk in chunks]
     
     async def extract_docx(self, docx_bytes: bytes) -> List[Dict]:
+        if not HAS_DOCX:
+            return [{'content': '[DOCX file - python-docx not installed]', 'type': 'text'}]
+            
         chunks = []
         doc = DocxDocument(io.BytesIO(docx_bytes))
         
@@ -243,6 +258,9 @@ class OCRAgentV2:
         return chunks
     
     async def extract_spreadsheet(self, file_bytes: bytes, file_type: str) -> List[Dict]:
+        if not HAS_PANDAS:
+            return [{'content': '[Spreadsheet file - pandas not installed]', 'type': 'text'}]
+            
         chunks = []
         
         if file_type == 'csv':
@@ -303,10 +321,16 @@ class OCRAgentV2:
         return [{'content': chunk, 'type': 'text'} for chunk in chunks]
     
     def extract_html(self, html: str) -> List[Dict]:
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, 'html.parser')
-        text = soup.get_text(separator='\n', strip=True)
-        return self.extract_text(text)
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, 'html.parser')
+            text = soup.get_text(separator='\n', strip=True)
+            return self.extract_text(text)
+        except ImportError:
+            # Fallback if BeautifulSoup not available
+            import re
+            text = re.sub('<[^<]+?>', '', html)
+            return self.extract_text(text)
     
     async def extract_archive(self, zip_bytes: bytes) -> List[Dict]:
         chunks = []
