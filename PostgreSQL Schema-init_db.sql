@@ -1,56 +1,81 @@
 -- Document Intelligence System - PostgreSQL Schema
+-- Safe initialization with fallbacks
 
+-- Create extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "vector";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Vector extension (optional - for embeddings)
+DO $$ 
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS "vector";
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE NOTICE 'vector extension not available - embeddings will use FLOAT[]';
+END $$;
+
+-- Check if vector type exists
+DO $$ 
+BEGIN
+    CREATE DOMAIN vector_type AS FLOAT[];
+EXCEPTION
+    WHEN duplicate_object THEN
+        NULL;
+END $$;
 
 -- Source tracking
-CREATE TABLE sources (
+CREATE TABLE IF NOT EXISTS sources (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
-    type VARCHAR(50) NOT NULL, -- folder, api, email, n8n
-    config JSONB,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    type VARCHAR(50) NOT NULL,
+    config JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(name, type)
 );
 
+-- Insert default source
+INSERT INTO sources (name, type) VALUES ('manual_upload', 'api') ON CONFLICT DO NOTHING;
+INSERT INTO sources (name, type) VALUES ('n8n_upload', 'n8n') ON CONFLICT DO NOTHING;
+
 -- Master document table
-CREATE TABLE documents (
+CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    source_id UUID REFERENCES sources(id),
+    source_id UUID REFERENCES sources(id) ON DELETE SET NULL,
     original_name VARCHAR(500) NOT NULL,
     file_type VARCHAR(50),
     file_size BIGINT,
-    file_hash VARCHAR(64) UNIQUE,
-    metadata JSONB,
-    status VARCHAR(50) DEFAULT 'pending', -- pending, processing, completed, failed, deleted
+    file_hash VARCHAR(64),
+    metadata JSONB DEFAULT '{}',
+    status VARCHAR(50) DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMP,
     deleted_at TIMESTAMP
 );
 
 -- Document chunks
-CREATE TABLE chunks (
+CREATE TABLE IF NOT EXISTS chunks (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
     content TEXT NOT NULL,
-    content_type VARCHAR(50), -- text, table, image_description
+    content_type VARCHAR(50) DEFAULT 'text',
     page_number INTEGER,
-    position JSONB, -- {x, y, width, height} for spatial reference
-    status VARCHAR(50) DEFAULT 'raw', -- raw, precleaned, enhanced, embedded
-    embedding vector(384), -- for semantic search
-    metadata JSONB,
+    position JSONB,
+    status VARCHAR(50) DEFAULT 'raw',
+    embedding FLOAT[], -- Fallback if vector not available
+    metadata JSONB DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     enhanced_at TIMESTAMP,
     UNIQUE(document_id, chunk_index)
 );
 
 -- Processing queue
-CREATE TABLE processing_queue (
+CREATE TABLE IF NOT EXISTS processing_queue (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    document_id UUID REFERENCES documents(id),
-    task_type VARCHAR(50), -- ocr, extract, enhance, embed
+    document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
+    task_type VARCHAR(50) NOT NULL,
     priority INTEGER DEFAULT 5,
-    deferred BOOLEAN DEFAULT FALSE, -- for night jobs
+    deferred BOOLEAN DEFAULT FALSE,
     retry_count INTEGER DEFAULT 0,
     status VARCHAR(50) DEFAULT 'pending',
     error_message TEXT,
@@ -60,39 +85,37 @@ CREATE TABLE processing_queue (
 );
 
 -- Search history for learning
-CREATE TABLE search_history (
+CREATE TABLE IF NOT EXISTS search_history (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     query TEXT NOT NULL,
-    query_embedding vector(384),
-    results JSONB, -- [{chunk_id, score, clicked}]
-    user_feedback INTEGER, -- 1-5 rating
+    query_embedding FLOAT[],
+    results JSONB DEFAULT '[]',
+    user_feedback INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Feedback for learning
-CREATE TABLE feedback_log (
+CREATE TABLE IF NOT EXISTS feedback_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    chunk_id UUID REFERENCES chunks(id),
-    query_id UUID REFERENCES search_history(id),
-    feedback_type VARCHAR(50), -- relevant, irrelevant, correction
-    feedback_data JSONB,
+    chunk_id UUID REFERENCES chunks(id) ON DELETE CASCADE,
+    query_id UUID REFERENCES search_history(id) ON DELETE CASCADE,
+    feedback_type VARCHAR(50),
+    feedback_data JSONB DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Indexes
-CREATE INDEX idx_documents_status ON documents(status);
-CREATE INDEX idx_documents_source ON documents(source_id);
-CREATE INDEX idx_chunks_document ON chunks(document_id);
-CREATE INDEX idx_chunks_status ON chunks(status);
-CREATE INDEX idx_chunks_embedding ON chunks USING ivfflat (embedding vector_cosine_ops);
-CREATE INDEX idx_processing_queue_status ON processing_queue(status, deferred);
-CREATE INDEX idx_search_history_created ON search_history(created_at DESC);
+-- Create indexes
+CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
+CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_status ON chunks(status);
+CREATE INDEX IF NOT EXISTS idx_processing_queue_status ON processing_queue(status, deferred);
+CREATE INDEX IF NOT EXISTS idx_search_history_created ON search_history(created_at DESC);
 
--- Cleanup trigger
+-- Cleanup function
 CREATE OR REPLACE FUNCTION cleanup_old_chunks() RETURNS trigger AS $$
 BEGIN
     IF NEW.status = 'enhanced' AND OLD.status = 'precleaned' THEN
-        -- Mark old version for deletion after 24h
         UPDATE chunks 
         SET status = 'archived', 
             metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{archived_at}', to_jsonb(CURRENT_TIMESTAMP))
@@ -104,13 +127,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Create trigger only if not exists
+DROP TRIGGER IF EXISTS trigger_cleanup_chunks ON chunks;
 CREATE TRIGGER trigger_cleanup_chunks
 AFTER UPDATE ON chunks
 FOR EACH ROW
 EXECUTE FUNCTION cleanup_old_chunks();
 
 -- Stats view
-CREATE VIEW document_stats AS
+CREATE OR REPLACE VIEW document_stats AS
 SELECT 
     d.id,
     d.original_name,
@@ -120,4 +145,14 @@ SELECT
     COUNT(DISTINCT CASE WHEN c.embedding IS NOT NULL THEN c.id END) as embedded_chunks
 FROM documents d
 LEFT JOIN chunks c ON d.id = c.document_id
-GROUP BY d.id;
+GROUP BY d.id, d.original_name, d.status;
+
+-- Grant permissions for n8n
+DO $$ 
+BEGIN
+    -- Grant permissions only if user exists
+    IF EXISTS (SELECT 1 FROM pg_user WHERE usename = current_user) THEN
+        GRANT ALL ON ALL TABLES IN SCHEMA public TO current_user;
+        GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO current_user;
+    END IF;
+END $$;
