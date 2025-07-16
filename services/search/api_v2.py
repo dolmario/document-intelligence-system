@@ -106,46 +106,42 @@ async def search(request: SearchRequest):
         # Get embedding from Ollama
         embedding = await get_embedding(request.query)
         
-        # Search in Qdrant
-        search_results = qdrant_client.search(
-            collection_name="documents",
-            query_vector=embedding,
-            limit=request.limit
-        )
-        
-        results = []
+        # For now, search directly in DB until Qdrant is populated
         async with db_pool.acquire() as conn:
             # Log search
             query_id = await conn.fetchval("""
-                INSERT INTO search_history (query, query_embedding)
-                VALUES ($1, $2) RETURNING id
-            """, request.query, embedding)
+                INSERT INTO search_history (query, query_embedding, results)
+                VALUES ($1, $2, $3::jsonb) RETURNING id
+            """, request.query, embedding, json.dumps([]))
             
-            for hit in search_results:
-                # Get chunk details
-                chunk = await conn.fetchrow("""
-                    SELECT c.*, d.original_name
-                    FROM chunks c
-                    JOIN documents d ON c.document_id = d.id
-                    WHERE c.id = $1::uuid
-                """, hit.id)
-                
-                if chunk:
-                    results.append(SearchResult(
-                        chunk_id=str(chunk['id']),
-                        document_name=chunk['original_name'],
-                        content=chunk['content'],
-                        score=hit.score,
-                        page=chunk['page_number'],
-                        metadata=chunk['metadata']
-                    ))
+            # Text search in chunks
+            chunks = await conn.fetch("""
+                SELECT c.*, d.original_name
+                FROM chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE c.content ILIKE $1
+                ORDER BY c.created_at DESC
+                LIMIT $2
+            """, f'%{request.query}%', request.limit)
+            
+            results = []
+            for chunk in chunks:
+                results.append(SearchResult(
+                    chunk_id=str(chunk['id']),
+                    document_name=chunk['original_name'],
+                    content=chunk['content'][:200] + '...' if len(chunk['content']) > 200 else chunk['content'],
+                    score=0.5,  # Placeholder score
+                    page=chunk['page_number'],
+                    metadata=chunk['metadata']
+                ))
             
             # Update search results for learning
-            await conn.execute("""
-                UPDATE search_history 
-                SET results = $2
-                WHERE id = $1
-            """, query_id, [{"chunk_id": r.chunk_id, "score": r.score} for r in results])
+            if results:
+                await conn.execute("""
+                    UPDATE search_history 
+                    SET results = $2::jsonb
+                    WHERE id = $1
+                """, query_id, json.dumps([{"chunk_id": r.chunk_id, "score": r.score} for r in results]))
         
         return results
         
@@ -160,17 +156,17 @@ async def upload_document(doc: DocumentUpload):
             # Create source if not exists
             source_id = await conn.fetchval("""
                 INSERT INTO sources (name, type, config)
-                VALUES ($1, $2, $3)
-                ON CONFLICT DO NOTHING
+                VALUES ($1, $2, $3::jsonb)
+                ON CONFLICT (name, type) DO UPDATE SET name = EXCLUDED.name
                 RETURNING id
-            """, f"api_{doc.source}", "api", {})
+            """, f"api_{doc.source}", "api", json.dumps({}))
             
             # Create document
             doc_id = await conn.fetchval("""
                 INSERT INTO documents (source_id, original_name, file_type, metadata)
-                VALUES ($1, $2, $3, $4)
+                VALUES ($1, $2, $3, $4::jsonb)
                 RETURNING id
-            """, source_id, doc.name, "text", doc.metadata or {})
+            """, source_id, doc.name, "text", json.dumps(doc.metadata or {}))
             
             # Create processing task
             await conn.execute("""
@@ -188,9 +184,9 @@ async def submit_feedback(feedback: FeedbackRequest):
     async with db_pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO feedback_log (chunk_id, query_id, feedback_type, feedback_data)
-            VALUES ($1::uuid, $2::uuid, $3, $4)
+            VALUES ($1::uuid, $2::uuid, $3, $4::jsonb)
         """, feedback.chunk_id, feedback.query_id, feedback.feedback_type, 
-            feedback.feedback_data or {})
+            json.dumps(feedback.feedback_data or {}))
     
     return {"status": "feedback recorded"}
 
