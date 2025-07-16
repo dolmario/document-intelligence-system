@@ -1,11 +1,11 @@
 -- Document Intelligence System - PostgreSQL Schema
--- Safe initialization with fallbacks
+-- Safe initialization with fallbacks and structured setup
 
--- Create extensions
+-- 1. Erweiterung von PostgreSQL mit UUID und Verschlüsselung
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Vector extension (optional - for embeddings)
+-- 2. Vector-Erweiterung (optional - für Embeddings)
 DO $$ 
 BEGIN
     CREATE EXTENSION IF NOT EXISTS "vector";
@@ -14,7 +14,7 @@ EXCEPTION
         RAISE NOTICE 'vector extension not available - embeddings will use FLOAT[]';
 END $$;
 
--- Check if vector type exists
+-- 3. Fallback: Vector-Type als FLOAT[] definieren, falls 'vector' nicht verfügbar
 DO $$ 
 BEGIN
     CREATE DOMAIN vector_type AS FLOAT[];
@@ -23,7 +23,7 @@ EXCEPTION
         NULL;
 END $$;
 
--- Source tracking
+-- 4. Quellen-Tabelle (z. B. Upload per API oder n8n)
 CREATE TABLE IF NOT EXISTS sources (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
@@ -33,11 +33,11 @@ CREATE TABLE IF NOT EXISTS sources (
     UNIQUE(name, type)
 );
 
--- Insert default source
+-- Standardwerte für sources
 INSERT INTO sources (name, type) VALUES ('manual_upload', 'api') ON CONFLICT DO NOTHING;
 INSERT INTO sources (name, type) VALUES ('n8n_upload', 'n8n') ON CONFLICT DO NOTHING;
 
--- Master document table
+-- 5. Dokumente-Tabelle (Metadaten zu hochgeladenen Dateien)
 CREATE TABLE IF NOT EXISTS documents (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     source_id UUID REFERENCES sources(id) ON DELETE SET NULL,
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS documents (
     deleted_at TIMESTAMP
 );
 
--- Document chunks
+-- 6. Chunks-Tabelle (aufgeteilte Textabschnitte eines Dokuments)
 CREATE TABLE IF NOT EXISTS chunks (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
@@ -62,14 +62,14 @@ CREATE TABLE IF NOT EXISTS chunks (
     page_number INTEGER,
     position JSONB,
     status VARCHAR(50) DEFAULT 'raw',
-    embedding FLOAT[], -- Fallback if vector not available
+    embedding FLOAT[], -- Fallback wenn kein vector-type verfügbar
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     enhanced_at TIMESTAMP,
     UNIQUE(document_id, chunk_index)
 );
 
--- Processing queue
+-- 7. Verarbeitungsschlange für asynchrone Aufgaben
 CREATE TABLE IF NOT EXISTS processing_queue (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     document_id UUID REFERENCES documents(id) ON DELETE CASCADE,
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS processing_queue (
     completed_at TIMESTAMP
 );
 
--- Search history for learning
+-- 8. Suchverlauf für Lernsysteme (z. B. Relevanzverbesserung)
 CREATE TABLE IF NOT EXISTS search_history (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     query TEXT NOT NULL,
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS search_history (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Feedback for learning
+-- 9. Feedback-Tabelle zur Bewertung von Suchtreffern
 CREATE TABLE IF NOT EXISTS feedback_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     chunk_id UUID REFERENCES chunks(id) ON DELETE CASCADE,
@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS feedback_log (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes
+-- 10. Indizes für Performance
 CREATE INDEX IF NOT EXISTS idx_documents_status ON documents(status);
 CREATE INDEX IF NOT EXISTS idx_documents_source ON documents(source_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
@@ -112,7 +112,7 @@ CREATE INDEX IF NOT EXISTS idx_chunks_status ON chunks(status);
 CREATE INDEX IF NOT EXISTS idx_processing_queue_status ON processing_queue(status, deferred);
 CREATE INDEX IF NOT EXISTS idx_search_history_created ON search_history(created_at DESC);
 
--- Cleanup function
+-- 11. Trigger für automatische Archivierung von Chunks
 CREATE OR REPLACE FUNCTION cleanup_old_chunks() RETURNS trigger AS $$
 BEGIN
     IF NEW.status = 'enhanced' AND OLD.status = 'precleaned' THEN
@@ -127,14 +127,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create trigger only if not exists
 DROP TRIGGER IF EXISTS trigger_cleanup_chunks ON chunks;
 CREATE TRIGGER trigger_cleanup_chunks
 AFTER UPDATE ON chunks
 FOR EACH ROW
 EXECUTE FUNCTION cleanup_old_chunks();
 
--- Stats view
+-- 12. Übersichtliche Statistikansicht für Adminzwecke
 CREATE OR REPLACE VIEW document_stats AS
 SELECT 
     d.id,
@@ -147,10 +146,9 @@ FROM documents d
 LEFT JOIN chunks c ON d.id = c.document_id
 GROUP BY d.id, d.original_name, d.status;
 
--- Grant permissions for n8n
+-- 13. Rechte für n8n oder andere Dienste
 DO $$ 
 BEGIN
-    -- Grant permissions only if user exists
     IF EXISTS (SELECT 1 FROM pg_user WHERE usename = current_user) THEN
         GRANT ALL ON ALL TABLES IN SCHEMA public TO current_user;
         GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO current_user;
