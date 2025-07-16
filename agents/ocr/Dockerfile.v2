@@ -1,0 +1,18 @@
+FFROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    tesseract-ocr \
+    tesseract-ocr-deu \
+    tesseract-ocr-eng \
+    poppler-utils \
+    gcc g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY agents/ocr/requirements.v2.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY agents/ocr/ocr_agent_v2.py ocr_agent.py
+
+CMD ["python", "ocr_agent.py"]
