@@ -1,0 +1,28 @@
+Testing Document Intelligence System 
+Testing Search API... 
+Search API OK 
+Search API FAILED (HTTP 200) 
+Testing N8N... 
+N8N OK 
+N8N FAILED (HTTP 200) 
+Testing Open WebUI... 
+Open WebUI OK 
+Open WebUI FAILED (HTTP 200) 
+Testing Qdrant... 
+Qdrant OK 
+Qdrant FAILED (HTTP 200) 
+Testing Ollama... 
+Ollama OK 
+Ollama FAILED (HTTP 200) 
+Testing document upload... 
+{"detail":"invalid input for query argument $3: {} (expected str, got dict)"}Upload failed 
+{"detail":""}Search failed 
+ 
+NAME                   IMAGE                                     COMMAND                  SERVICE      CREATED       STATUS                    PORTS
+doc-intel-n8n          docker.n8n.io/n8nio/n8n:latest            "tini -- /docker-ent…"   n8n          3 hours ago   Up 16 minutes             0.0.0.0:5678->5678/tcp, [::]:5678->5678/tcp
+doc-intel-ocr          document-intelligence-system-ocr_agent    "python -u ocr_agent…"   ocr_agent    3 hours ago   Up 16 minutes             
+doc-intel-ollama       ollama/ollama:latest                      "/bin/ollama serve"      ollama       3 hours ago   Up 16 minutes             0.0.0.0:11434->11434/tcp, [::]:11434->11434/tcp
+doc-intel-postgres     postgres:16-alpine                        "docker-entrypoint.s…"   postgres     3 hours ago   Up 16 minutes (healthy)   0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
+doc-intel-qdrant       qdrant/qdrant:latest                      "./entrypoint.sh"        qdrant       3 hours ago   Up 16 minutes             0.0.0.0:6333-6334->6333-6334/tcp, [::]:6333-6334->6333-6334/tcp
+doc-intel-search-api   document-intelligence-system-search_api   "python -m uvicorn a…"   search_api   3 hours ago   Up 16 minutes (healthy)   0.0.0.0:8001->8001/tcp, [::]:8001->8001/tcp
+doc-intel-webui        ghcr.io/open-webui/open-webui:main        "bash start.sh"          open-webui   3 hours ago   Up 16 minutes (healthy)   0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp
