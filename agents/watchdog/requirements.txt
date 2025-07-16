@@ -1,4 +1,0 @@
-watchdog==3.0.0
-redis==5.0.1
-aiofiles==23.2.1
-python-dotenv==1.0.0
