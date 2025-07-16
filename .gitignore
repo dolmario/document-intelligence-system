@@ -1,27 +1,36 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Data directories
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+indices/
+
+# N8N
+n8n/workflows/*
+!n8n/workflows/document_processing_v2.json
+n8n_data/
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
 venv/
-.env
-
-# Daten
-data/*
-!data/.gitkeep
-indices/*
-!indices/.gitkeep
-
-# Logs
-*.log
-logs/
+env/
+ENV/
 
 # IDE
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 
 # OS
 .DS_Store
@@ -30,7 +39,18 @@ Thumbs.db
 # Docker
 .docker/
 
+# Backups
+*.sql
+*.tar.gz
+*.zip
+backup/
+
+# Test files
+test_*.txt
+test_*.pdf
+
 # Sensitive
 *.pem
 *.key
-config/secrets/
+*.crt
+secrets/
