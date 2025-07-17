@@ -75,44 +75,42 @@ services:
     restart: unless-stopped
 
   n8n:
-  image: docker.n8n.io/n8nio/n8n
-  container_name: doc-intel-n8n
-  ports:
-    - "5678:5678"
-  environment:
-    DB_TYPE: postgresdb
-    DB_POSTGRESDB_HOST: postgres
-    DB_POSTGRESDB_PORT: 5432
-    DB_POSTGRESDB_DATABASE: document_intelligence
-    DB_POSTGRESDB_USER: docintell
-    DB_POSTGRESDB_PASSWORD: docintell123
-    N8N_BASIC_AUTH_ACTIVE: "true"
-    N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
-    N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-changeme}
-    N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change-this-key}
-    N8N_HOST: 0.0.0.0
-    N8N_PORT: 5678
-    N8N_PROTOCOL: http
-    WEBHOOK_URL: http://n8n:5678/
-    GENERIC_TIMEZONE: ${TZ:-Europe/Berlin}
-    
-    # Neue Variablen hinzufügen
-    N8N_RUNNERS_ENABLED: "true"
-    N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-    N8N_WEBHOOK_AUTH_ACTIVE: "true"
-    N8N_WEBHOOK_AUTH_USER: "webhook_user"
-    N8N_WEBHOOK_AUTH_PASSWORD: "${N8N_WEBHOOK_PASSWORD:-changeme}"
-    
-  volumes:
-    - n8n_data:/home/node/.n8n
-    - ./n8n/workflows:/workflows
-    - ./data:/data
-  depends_on:
-    postgres:
-      condition: service_healthy
-  networks:
-    - doc_network
-  restart: unless-stopped
+    image: docker.n8n.io/n8nio/n8n
+    container_name: doc-intel-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: document_intelligence
+      DB_POSTGRESDB_USER: docintell
+      DB_POSTGRESDB_PASSWORD: docintell123
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-changeme}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change-this-key}
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://n8n:5678/
+      GENERIC_TIMEZONE: ${TZ:-Europe/Berlin}
+      # Neue Variablen hinzufügen
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_WEBHOOK_AUTH_ACTIVE: "true"
+      N8N_WEBHOOK_AUTH_USER: "webhook_user"
+      N8N_WEBHOOK_AUTH_PASSWORD: "${N8N_WEBHOOK_PASSWORD:-changeme}"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - doc_network
+    restart: unless-stopped
 
   ollama:
     image: ollama/ollama:latest
