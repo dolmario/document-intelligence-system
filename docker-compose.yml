@@ -5,18 +5,18 @@ services:
     image: postgres:16-alpine
     container_name: doc-intel-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-docintell}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-docintell123}
-      POSTGRES_DB: ${POSTGRES_DB:-document_intelligence}
+      POSTGRES_USER: docintell
+      POSTGRES_PASSWORD: docintell123
+      POSTGRES_DB: document_intelligence
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init_db.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - doc_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-docintell}"]
+      test: ["CMD-SHELL", "pg_isready -U docintell -d document_intelligence"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -95,6 +95,12 @@ services:
       N8N_PROTOCOL: http
       WEBHOOK_URL: http://n8n:5678/
       GENERIC_TIMEZONE: ${TZ:-Europe/Berlin}
+      # Neue Variablen hinzufügen
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_WEBHOOK_AUTH_ACTIVE: "true"
+      N8N_WEBHOOK_AUTH_USER: "webhook_user"
+      N8N_WEBHOOK_AUTH_PASSWORD: "${N8N_WEBHOOK_PASSWORD:-changeme}"
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows
