@@ -1,0 +1,164 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: doc-intel-postgres
+    environment:
+      POSTGRES_USER: docintell
+      POSTGRES_PASSWORD: docintell123
+      POSTGRES_DB: document_intelligence
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - doc_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docintell -d document_intelligence"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: doc-intel-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - doc_network
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+
+  ocr_agent:
+    build:
+      context: .
+      dockerfile: agents/ocr/Dockerfile.v2
+    container_name: doc-intel-ocr
+    volumes:
+      - ./data:/data:ro
+      - ./logs:/app/logs
+    environment:
+      DATABASE_URL: postgresql://docintell:docintell123@postgres:5432/document_intelligence
+      TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+      PYTHONUNBUFFERED: 1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  search_api:
+    build:
+      context: .
+      dockerfile: services/search/Dockerfile.v2
+    container_name: doc-intel-search-api
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_URL: postgresql://docintell:docintell123@postgres:5432/document_intelligence
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
+      PYTHONUNBUFFERED: 1
+    depends_on:
+      - postgres
+      - qdrant
+      - ollama
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: doc-intel-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: document_intelligence
+      DB_POSTGRESDB_USER: docintell
+      DB_POSTGRESDB_PASSWORD: docintell123
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-changeme}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change-this-key}
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://n8n:5678/
+      GENERIC_TIMEZONE: ${TZ:-Europe/Berlin}
+      # Neue Variablen hinzufügen
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_WEBHOOK_AUTH_ACTIVE: "true"
+      N8N_WEBHOOK_AUTH_USER: "webhook_user"
+      N8N_WEBHOOK_AUTH_PASSWORD: "${N8N_WEBHOOK_PASSWORD:-changeme}"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/workflows
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: doc-intel-ollama
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h
+      OLLAMA_HOST: 0.0.0.0
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - doc_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: doc-intel-webui
+    ports:
+      - "8080:8080"
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-change-this-secret}
+      WEBUI_AUTH: ${WEBUI_AUTH:-false}
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
+      DEFAULT_MODELS: ${DEFAULT_MODEL:-mistral}
+    volumes:
+      - open_webui_data:/app/backend/data
+    depends_on:
+      - ollama
+    networks:
+      - doc_network
+    restart: unless-stopped
+
+networks:
+  doc_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  n8n_data:
+  ollama_data:
+  open_webui_data:
