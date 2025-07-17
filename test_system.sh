@@ -19,10 +19,10 @@ test_service() {
     response=$(curl -s -o /dev/null -w "%{http_code}" "$url")
     
     if [ "$response" = "$expected" ]; then
-        echo -e "${GREEN}✅ OK${NC}"
+        echo -e "${GREEN}✅ OK (HTTP $response)${NC}"
         return 0
     else
-        echo -e "${RED}❌ FAILED (HTTP $response)${NC}"
+        echo -e "${RED}❌ FAILED (HTTP $response, expected $expected)${NC}"
         return 1
     fi
 }
