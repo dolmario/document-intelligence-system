@@ -1,113 +1,166 @@
 {
-  "name": "My workflow",
+  "name": "Document Processing V2",
   "nodes": [
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "doc-webhook",
+        "path": "doc-upload",
+        "responseMode": "responseNode",
         "options": {}
       },
-      "name": "Document Upload Webhook",
+      "name": "Document Upload",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 1,
-      "position": [
-        1568,
-        432
-      ],
-      "webhookId": "doc-webhook",
-      "id": "6e554638-09f0-42ab-b08b-a886a546c201"
+      "position": [250, 300],
+      "typeVersion": 1
     },
     {
       "parameters": {
-        "command": "find /data -type f -mmin -1 -name '*.pdf' -o -name '*.txt' -o -name '*.jpg' -o -name '*.png' | head -10"
+        "operation": "executeQuery",
+        "query": "INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), '{{ $json.fileName }}', '{{ $json.fileType }}', '{{ JSON.stringify($json.metadata) }}'::jsonb) RETURNING id",
+        "additionalFields": {}
       },
-      "name": "Find New Files",
-      "type": "n8n-nodes-base.executeCommand",
+      "name": "Save to DB",
+      "type": "n8n-nodes-base.postgres",
+      "position": [450, 300],
       "typeVersion": 1,
-      "position": [
-        1568,
-        624
-      ],
-      "id": "3e00bd50-cc5d-4a23-b6c8-4fe55578338d",
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "functionCode": "// Process file list and create tasks\nconst items = [];\nconst stdout = $input.all()[0].json.stdout;\n\nif (stdout && stdout.trim()) {\n  const files = stdout.trim().split('\\n').filter(f => f);\n  \n  for (const filePath of files) {\n    const fileName = filePath.split('/').pop();\n    const fileExt = fileName.split('.').pop().toLowerCase();\n    \n    // Determine task type\n    let taskType = 'index';\n    if (['pdf', 'png', 'jpg', 'jpeg', 'tiff', 'tif'].includes(fileExt)) {\n      taskType = 'ocr';\n    } else if (['txt', 'md', 'csv'].includes(fileExt)) {\n      taskType = 'text';\n    }\n    \n    // Create task\n    const task = {\n      task_id: `n8n_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n      file_path: filePath,\n      file_name: fileName,\n      task_type: taskType,\n      source: 'n8n_file_watcher',\n      priority: 5,\n      created_at: new Date().toISOString()\n    };\n    \n    items.push({json: task});\n  }\n}\n\nreturn items.length > 0 ? items : [{json: {message: 'No new files found'}}];"
-      },
-      "name": "Create Tasks from Files",
-      "type": "n8n-nodes-base.function",
-      "typeVersion": 1,
-      "position": [
-        1776,
-        624
-      ],
-      "id": "5ea0821f-d973-4ddc-bad3-eb8b27e6b854",
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "filePath": "={{ $json.file_path.trim() }}"
-      },
-      "name": "Read File Binary",
-      "type": "n8n-nodes-base.readBinaryFile",
-      "typeVersion": 1,
-      "position": [
-        1968,
-        624
-      ],
-      "id": "f5e88fb1-d1d5-448e-901f-0534e9be44ad",
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "functionCode": "// Convert binary to base64 and enhance task\nconst items = [];\n\nfor (const item of $input.all()) {\n  const task = item.json;\n  \n  if (item.binary && item.binary.data) {\n    // Add base64 content to task\n    task.file_content = item.binary.data.data;\n    task.mime_type = item.binary.data.mimeType || 'application/octet-stream';\n  }\n  \n  items.push({json: task});\n}\n\nreturn items;"
-      },
-      "name": "Add Base64 Content",
-      "type": "n8n-nodes-base.function",
-      "typeVersion": 1,
-      "position": [
-        2176,
-        624
-      ],
-      "id": "746ac862-8f5a-4c7d-b1f0-4dc5ede83365",
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "operation": "push",
-        "list": "=processing_queue",
-        "messageData": "={{JSON.stringify($json)}}"
-      },
-      "name": "Push to Redis Queue",
-      "type": "n8n-nodes-base.redis",
-      "typeVersion": 1,
-      "position": [
-        2368,
-        528
-      ],
-      "id": "20c5922a-e9a7-4e1e-b919-3c86f96d2af7",
       "credentials": {
-        "redis": {
-          "id": "90xXjCwAdBRlbI1G",
-          "name": "Redis account 3"
+        "postgres": {
+          "id": "1",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_queue (document_id, task_type, priority) VALUES ('{{ $json.id }}', 'extract', 5)"
+      },
+      "name": "Queue for Processing",
+      "type": "n8n-nodes-base.postgres",
+      "position": [650, 300],
+      "typeVersion": 1,
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "hour": 3,
+              "minute": 0
+            }
+          ]
         }
       },
-      "onError": "continueRegularOutput"
+      "name": "Night Job Trigger",
+      "type": "n8n-nodes-base.cron",
+      "position": [250, 500],
+      "typeVersion": 1
     },
     {
       "parameters": {
-        "functionCode": "// Process webhook uploads\nconst items = [];\n\nfor (const item of $input.all()) {\n  if (item.binary && item.binary.data) {\n    const binaryData = item.binary.data;\n    \n    const task = {\n      task_id: `webhook_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n      file_name: binaryData.fileName || 'upload.bin',\n      file_content: binaryData.data,\n      mime_type: binaryData.mimeType || 'application/octet-stream',\n      task_type: determineTaskType(binaryData.fileName, binaryData.mimeType),\n      source: 'webhook_upload',\n      priority: 5,\n      created_at: new Date().toISOString()\n    };\n    \n    items.push({json: task});\n  } else if (item.json.event === 'file_added' && item.json.file_path) {\n    // Legacy format support\n    const task = {\n      task_id: `legacy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,\n      file_path: item.json.file_path,\n      task_type: 'ocr',\n      source: item.json.source || 'webhook',\n      priority: 5,\n      created_at: new Date().toISOString()\n    };\n    \n    items.push({json: task});\n  }\n}\n\nfunction determineTaskType(fileName, mimeType) {\n  const ext = (fileName || '').toLowerCase().split('.').pop();\n  \n  if (['pdf', 'png', 'jpg', 'jpeg', 'tiff', 'tif'].includes(ext) || \n      (mimeType && mimeType.includes('image'))) {\n    return 'ocr';\n  } else if (['txt', 'md', 'csv'].includes(ext) || \n             (mimeType && mimeType.includes('text'))) {\n    return 'text';\n  }\n  \n  return 'index';\n}\n\nreturn items;"
+        "operation": "executeQuery",
+        "query": "SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id WHERE c.status = 'precleaned' AND d.status != 'deleted' LIMIT 100"
       },
-      "name": "Process Webhook Data",
-      "type": "n8n-nodes-base.function",
+      "name": "Get Chunks for Enhancement",
+      "type": "n8n-nodes-base.postgres",
+      "position": [450, 500],
       "typeVersion": 1,
-      "position": [
-        1776,
-        432
-      ],
-      "id": "d5466317-5716-41ab-afa1-51fd052c8e38",
-      "onError": "continueRegularOutput"
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/generate",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
+            },
+            {
+              "name": "prompt",
+              "value": "Verbessere den folgenden Text. Korrigiere Rechtschreibfehler, verbessere die Struktur, aber behalte alle wichtigen Informationen:\\n\\n{{ $json.content }}\\n\\nVerbesserte Version:"
+            },
+            {
+              "name": "stream",
+              "value": false
+            }
+          ]
+        }
+      },
+      "name": "LLM Enhancement",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [650, 500],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE chunks SET content = '{{ $json.response }}', status = 'enhanced', enhanced_at = NOW() WHERE id = '{{ $json.id }}'"
+      },
+      "name": "Save Enhanced",
+      "type": "n8n-nodes-base.postgres",
+      "position": [850, 500],
+      "typeVersion": 1,
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "http://ollama:11434/api/embeddings",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.content }}"
+            }
+          ]
+        }
+      },
+      "name": "Generate Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1050, 500],
+      "typeVersion": 3
+    },
+    {
+      "parameters": {
+        "url": "http://qdrant:6333/collections/documents/points",
+        "method": "PUT",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "points",
+              "value": "[{\"id\": \"{{ $json.id }}\", \"vector\": {{ JSON.stringify($json.embedding) }}, \"payload\": {\"chunk_id\": \"{{ $json.id }}\"}}]"
+            }
+          ]
+        }
+      },
+      "name": "Store in Qdrant",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1250, 500],
+      "typeVersion": 3
     },
     {
       "parameters": {
@@ -118,135 +171,101 @@
               "value": "success"
             },
             {
-              "name": "message",
-              "value": "Document queued for processing"
-            },
-            {
-              "name": "task_id",
-              "value": "={{$json.task_id}}"
-            },
-            {
-              "name": "queue_length",
-              "value": "={{$json.queue_length || 'unknown'}}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "name": "Success Response",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 1,
-      "position": [
-        2576,
-        528
-      ],
-      "id": "4840786b-df6c-4113-8dff-925397ad06ba",
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "seconds"
+              "name": "document_id",
+              "value": "={{ $node['Save to DB'].json.id }}"
             }
           ]
         }
       },
-      "name": "Schedule Trigger",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1,
-      "position": [
-        1376,
-        624
-      ],
-      "id": "ae74348c-d030-4b9b-b4a5-01bfae63c7b0"
+      "name": "Response",
+      "type": "n8n-nodes-base.set",
+      "position": [850, 300],
+      "typeVersion": 1
     }
   ],
-  "pinData": {},
   "connections": {
-    "Document Upload Webhook": {
+    "Document Upload": {
       "main": [
         [
           {
-            "node": "Process Webhook Data",
+            "node": "Save to DB",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Schedule Trigger": {
+    "Save to DB": {
       "main": [
         [
           {
-            "node": "Find New Files",
+            "node": "Queue for Processing",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Find New Files": {
+    "Queue for Processing": {
       "main": [
         [
           {
-            "node": "Create Tasks from Files",
+            "node": "Response",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Create Tasks from Files": {
+    "Night Job Trigger": {
       "main": [
         [
           {
-            "node": "Read File Binary",
+            "node": "Get Chunks for Enhancement",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Read File Binary": {
+    "Get Chunks for Enhancement": {
       "main": [
         [
           {
-            "node": "Add Base64 Content",
+            "node": "LLM Enhancement",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Add Base64 Content": {
+    "LLM Enhancement": {
       "main": [
         [
           {
-            "node": "Push to Redis Queue",
+            "node": "Save Enhanced",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process Webhook Data": {
+    "Save Enhanced": {
       "main": [
         [
           {
-            "node": "Push to Redis Queue",
+            "node": "Generate Embedding",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Push to Redis Queue": {
+    "Generate Embedding": {
       "main": [
         [
           {
-            "node": "Success Response",
+            "node": "Store in Qdrant",
             "type": "main",
             "index": 0
           }
@@ -254,16 +273,7 @@
       ]
     }
   },
-  "active": true,
   "settings": {
     "executionOrder": "v1"
-  },
-  "versionId": "8deb2fec-4a5a-4eb5-9f36-8c7c3958dae6",
-  "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "9864951ea4472b9d0ea716c66bb2527efb446aa6309ab9f74077ab1db432402b"
-  },
-  "id": "LVShTSoyja7c2ZtT",
-  "tags": []
-}
+  }
 }
