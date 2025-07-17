@@ -14,11 +14,11 @@ RUN apt-get update && apt-get install -y \
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Copy and install requirements
-COPY services/search/requirements.v2.txt requirements.txt
+COPY services/search/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
-COPY services/search/api_v2.py api.py
+COPY services/search/api.py api.py
 COPY services/anonymizer.py anonymizer.py
 
 # Create necessary directories
