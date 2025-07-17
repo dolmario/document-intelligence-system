@@ -3,44 +3,16 @@
   "nodes": [
     {
       "parameters": {
-        "path": "doc-upload",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "name": "Document Upload",
-      "type": "n8n-nodes-base.webhook",
-      "position": [0, 0],
-      "typeVersion": 1,
-      "id": "1f7ff61a-1629-4790-be9e-a4d06e28ae05",
-      "webhookId": "ac847e3f-8cee-4467-a3b5-182a7387d509"
-    },
-    {
-      "parameters": {
         "functionCode": "// Prepare data for SQL injection-safe insertion\nconst item = $input.first().json;\n\n// Escape single quotes in strings\nfunction escapeSql(str) {\n  return str ? str.toString().replace(/'/g, \"''\") : '';\n}\n\n// Build the SQL query with escaped values\nconst fileName = escapeSql(item.fileName);\nconst fileType = escapeSql(item.fileType);\nconst metadata = JSON.stringify(item.metadata || {});\n\nreturn [{\n  fileName: fileName,\n  fileType: fileType,\n  metadata: metadata,\n  sql: `INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), '${fileName}', '${fileType}', '${metadata}'::jsonb) RETURNING id`\n}];"
       },
       "name": "Prepare SQL",
       "type": "n8n-nodes-base.function",
-      "position": [200, 0],
+      "position": [
+        1168,
+        32
+      ],
       "typeVersion": 1,
-      "id": "prepare-sql-node"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "={{ $json.sql }}",
-        "additionalFields": {}
-      },
-      "name": "Save to DB",
-      "type": "n8n-nodes-base.postgres",
-      "position": [400, 0],
-      "typeVersion": 1,
-      "id": "4988e7d4-1d87-4989-b814-23de67af5dbe",
-      "credentials": {
-        "postgres": {
-          "id": "qYteelIvcCtq3rcj",
-          "name": "Postgres account"
-        }
-      }
+      "id": "81c1b6c9-ad41-47d5-83c8-81d0123c78df"
     },
     {
       "parameters": {
@@ -48,9 +20,12 @@
       },
       "name": "Prepare Queue SQL",
       "type": "n8n-nodes-base.function",
-      "position": [600, 0],
+      "position": [
+        1568,
+        32
+      ],
       "typeVersion": 1,
-      "id": "prepare-queue-sql"
+      "id": "94ea2e6d-0b42-4319-a0f7-c18ce3f247af"
     },
     {
       "parameters": {
@@ -60,9 +35,63 @@
       },
       "name": "Queue for Processing",
       "type": "n8n-nodes-base.postgres",
-      "position": [800, 0],
+      "position": [
+        1760,
+        32
+      ],
       "typeVersion": 1,
-      "id": "7a50b50f-ab4b-4d6d-9d1a-c4bda0be642a",
+      "id": "3a517dcf-5b13-45c6-ba37-caeb3a6c89f4",
+      "credentials": {
+        "postgres": {
+          "id": "qYteelIvcCtq3rcj",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const chunk = $input.first().json;\nconst response = chunk.response || chunk.text || '';\nconst chunkId = chunk.id;\n\nreturn [{\n  id: chunkId,\n  sql: `UPDATE chunks SET content = '${response.replace(/'/g, \"''\") }', status = 'enhanced', enhanced_at = NOW() WHERE id = '${chunkId}'`\n}];"
+      },
+      "name": "Prepare Enhanced SQL",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        1568,
+        240
+      ],
+      "typeVersion": 1,
+      "id": "299d02ad-6c16-43db-9df3-4144564a166e"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "doc-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Document Upload1",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        1008,
+        48
+      ],
+      "typeVersion": 1,
+      "id": "ac4467ce-b2f3-4635-a5e9-b10f33d94fcd",
+      "webhookId": "ac847e3f-8cee-4467-a3b5-182a7387d509"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "additionalFields": {}
+      },
+      "name": "Save to DB1",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        1360,
+        32
+      ],
+      "typeVersion": 1,
+      "id": "9f5c4013-51ef-483a-baec-502123dc5fd1",
       "credentials": {
         "postgres": {
           "id": "qYteelIvcCtq3rcj",
@@ -80,11 +109,14 @@
           ]
         }
       },
-      "name": "Night Job Trigger",
+      "name": "Night Job Trigger1",
       "type": "n8n-nodes-base.cron",
-      "position": [0, 208],
+      "position": [
+        960,
+        240
+      ],
       "typeVersion": 1,
-      "id": "117da39f-994f-446b-bc17-ba2485fc440f"
+      "id": "fcfacad5-550a-4b2c-9a54-b1220c5739cf"
     },
     {
       "parameters": {
@@ -92,11 +124,14 @@
         "query": "SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id WHERE c.status = 'precleaned' AND d.status != 'deleted' LIMIT 100",
         "additionalFields": {}
       },
-      "name": "Get Chunks for Enhancement",
+      "name": "Get Chunks for Enhancement1",
       "type": "n8n-nodes-base.postgres",
-      "position": [208, 208],
+      "position": [
+        1168,
+        240
+      ],
       "typeVersion": 1,
-      "id": "e65bbf26-7478-404d-9815-bfff63f340d9",
+      "id": "794bd438-9afc-4920-9b91-a93397d320fe",
       "credentials": {
         "postgres": {
           "id": "qYteelIvcCtq3rcj",
@@ -127,21 +162,14 @@
         },
         "options": {}
       },
-      "name": "LLM Enhancement",
+      "name": "LLM Enhancement1",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [400, 208],
+      "position": [
+        1360,
+        240
+      ],
       "typeVersion": 3,
-      "id": "e84e9584-6993-4173-98e1-63c9ad0fe399"
-    },
-    {
-      "parameters": {
-        "functionCode": "const chunk = $input.first().json;\nconst response = chunk.response || chunk.text || '';\nconst chunkId = chunk.id;\n\nreturn [{\n  id: chunkId,\n  sql: `UPDATE chunks SET content = '${response.replace(/'/g, \"''\") }', status = 'enhanced', enhanced_at = NOW() WHERE id = '${chunkId}'`\n}];"
-      },
-      "name": "Prepare Enhanced SQL",
-      "type": "n8n-nodes-base.function",
-      "position": [600, 208],
-      "typeVersion": 1,
-      "id": "prepare-enhanced-sql"
+      "id": "5a987613-56f3-420c-a0ae-97215a7e319c"
     },
     {
       "parameters": {
@@ -149,11 +177,14 @@
         "query": "={{ $json.sql }}",
         "additionalFields": {}
       },
-      "name": "Save Enhanced",
+      "name": "Save Enhanced1",
       "type": "n8n-nodes-base.postgres",
-      "position": [800, 208],
+      "position": [
+        1760,
+        240
+      ],
       "typeVersion": 1,
-      "id": "1e1b90c0-59f6-4d43-96fa-d3dc2553e811",
+      "id": "ae039781-c39f-488e-8d8b-4454914edd05",
       "credentials": {
         "postgres": {
           "id": "qYteelIvcCtq3rcj",
@@ -180,11 +211,14 @@
         },
         "options": {}
       },
-      "name": "Generate Embedding",
+      "name": "Generate Embedding1",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1000, 208],
+      "position": [
+        1968,
+        240
+      ],
       "typeVersion": 3,
-      "id": "b29861ca-d255-4161-b96b-92cdefc52a2f"
+      "id": "9d6f7f55-92ee-4ec6-8df5-6048f3b2e32d"
     },
     {
       "parameters": {
@@ -201,11 +235,14 @@
         },
         "options": {}
       },
-      "name": "Store in Qdrant",
+      "name": "Store in Qdrant1",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1200, 208],
+      "position": [
+        2160,
+        240
+      ],
       "typeVersion": 3,
-      "id": "5481c49a-afc4-47ee-b0bc-8fc9598218a6"
+      "id": "a7e96ccf-8868-43c7-80bd-e13338c11df0"
     },
     {
       "parameters": {
@@ -217,48 +254,29 @@
             },
             {
               "name": "document_id",
-              "value": "={{ $node['Save to DB'].json[0].id }}"
+              "value": "={{ $node['Save to DB1'].json[0].id }}"
             }
           ]
         },
         "options": {}
       },
-      "name": "Response",
+      "name": "Response1",
       "type": "n8n-nodes-base.set",
-      "position": [1000, 0],
+      "position": [
+        1968,
+        32
+      ],
       "typeVersion": 1,
-      "id": "ac902019-c665-4bc9-b140-774ce9a690dc"
+      "id": "c5bfe6db-8c95-42b9-b990-3f7718b0e4d3"
     }
   ],
   "pinData": {},
   "connections": {
-    "Document Upload": {
-      "main": [
-        [
-          {
-            "node": "Prepare SQL",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Prepare SQL": {
       "main": [
         [
           {
-            "node": "Save to DB",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save to DB": {
-      "main": [
-        [
-          {
-            "node": "Prepare Queue SQL",
+            "node": "Save to DB1",
             "type": "main",
             "index": 0
           }
@@ -280,40 +298,7 @@
       "main": [
         [
           {
-            "node": "Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Night Job Trigger": {
-      "main": [
-        [
-          {
-            "node": "Get Chunks for Enhancement",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Chunks for Enhancement": {
-      "main": [
-        [
-          {
-            "node": "LLM Enhancement",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "LLM Enhancement": {
-      "main": [
-        [
-          {
-            "node": "Prepare Enhanced SQL",
+            "node": "Response1",
             "type": "main",
             "index": 0
           }
@@ -324,29 +309,84 @@
       "main": [
         [
           {
-            "node": "Save Enhanced",
+            "node": "Save Enhanced1",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Save Enhanced": {
+    "Document Upload1": {
       "main": [
         [
           {
-            "node": "Generate Embedding",
+            "node": "Prepare SQL",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Generate Embedding": {
+    "Save to DB1": {
       "main": [
         [
           {
-            "node": "Store in Qdrant",
+            "node": "Prepare Queue SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Night Job Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Get Chunks for Enhancement1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Chunks for Enhancement1": {
+      "main": [
+        [
+          {
+            "node": "LLM Enhancement1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Enhancement1": {
+      "main": [
+        [
+          {
+            "node": "Prepare Enhanced SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Enhanced1": {
+      "main": [
+        [
+          {
+            "node": "Generate Embedding1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Embedding1": {
+      "main": [
+        [
+          {
+            "node": "Store in Qdrant1",
             "type": "main",
             "index": 0
           }
@@ -358,7 +398,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "ff05ffd2-a8b0-4dd4-b50b-7aec6e478272",
+  "versionId": "5ae5e03d-2150-47d7-b8b3-336f739a6dfb",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "92268cf0e1ac5f3e7215c6d8377622f8297127868485b08c2d2ff147c192b0b2"

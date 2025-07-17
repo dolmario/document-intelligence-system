@@ -169,19 +169,24 @@ class OCRAgentV2:
                 )
 
     async def extract_content(self, doc: Dict) -> List[Dict]:
-        file_type = doc["file_type"].lower()
+        file_type = doc['file_type'].lower()
     
         # Fix: Parse metadata if it's a string
         import json
-        metadata = json.loads(doc["metadata"]) if isinstance(doc["metadata"], str) else doc["metadata"]
+        metadata = doc.get('metadata', {})
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except:
+                metadata = {}
     
-        file_path = metadata.get("file_path")
-        file_content = metadata.get("file_content")
-
+        file_path = metadata.get('file_path')
+        file_content = metadata.get('file_content')
+    
         if file_content:
             file_bytes = base64.b64decode(file_content)
         elif file_path and os.path.exists(file_path):
-            with open(file_path, "rb") as f:
+            with open(file_path, 'rb') as f:
                 file_bytes = f.read()
         else:
             raise ValueError("No file content available")
