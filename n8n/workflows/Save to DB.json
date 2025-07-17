@@ -1,0 +1,78 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Start",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [100, 100],
+      "id": "start-node-id"
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{\n  id: 'c6c2d4c0-53f8-11ec-bf63-0242ac130002',\n  fileName: 'example.pdf',\n  fileType: 'application/pdf',\n  metadata: { \n    uploadedBy: 'n8n',\n    pages: 4\n  }\n}];"
+      },
+      "name": "Mock Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [250, 100],
+      "id": "mock-node-id"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "name": "Debugger",
+      "type": "n8n-nodes-base.debug",
+      "typeVersion": 1,
+      "position": [400, 100],
+      "id": "debug-node-id"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES (\n  (SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1),\n  '{{ $json[\"fileName\"] }}',\n  '{{ $json[\"fileType\"] }}',\n  '{{ JSON.stringify($json[\"metadata\"]) }}'::jsonb\n) RETURNING id",
+        "queryParams": "=[]",
+        "additionalFields": {}
+      },
+      "name": "Save to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [550, 100],
+      "id": "save-node-id",
+      "credentials": {
+        "postgres": "qYteelIvcCtq3rcj"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_queue (document_id, task_type, priority) VALUES ($1, 'extract', 5)",
+        "queryParams": "={{ [ $json[\"id\"] }}",
+        "additionalFields": {}
+      },
+      "name": "Queue for Processing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [700, 100],
+      "id": "queue-node-id",
+      "credentials": {
+        "postgres": "qYteelIvcCtq3rcj"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [[{ "node": "Mock Data" }]]
+    },
+    "Mock Data": {
+      "main": [[{ "node": "Debugger" }]]
+    },
+    "Debugger": {
+      "main": [[{ "node": "Save to DB" }]]
+    },
+    "Save to DB": {
+      "main": [[{ "node": "Queue for Processing" }]]
+    }
+  }
+}

@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import asyncio
 import asyncpg
+import json
 import logging
 import os
 from datetime import datetime

@@ -1,0 +1,59 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Start",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [100, 100],
+      "id": "start-node-id"
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{ id: 'c6c2d4c0-53f8-11ec-bf63-0242ac130002' }];"
+      },
+      "name": "Mock Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [250, 100],
+      "id": "mock-node-id"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "name": "Debugger",
+      "type": "n8n-nodes-base.debug",
+      "typeVersion": 1,
+      "position": [400, 100],
+      "id": "debug-node-id"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_queue (document_id, task_type, priority) VALUES ($1, 'extract', 5);",
+        "queryParams": "={{ [$json[\"id\"]] }}",
+        "additionalFields": {}
+      },
+      "name": "Queue for Processing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [550, 100],
+      "id": "7a50b50f-ab4b-4d6d-9d1a-c4bda0be642a",
+      "credentials": {
+        "postgres": "qYteelIvcCtq3rcj"
+      }
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [[["Mock Data"]]]
+    },
+    "Mock Data": {
+      "main": [[["Debugger"]]]
+    },
+    "Debugger": {
+      "main": [[["Queue for Processing"]]]
+    }
+  }
+}
