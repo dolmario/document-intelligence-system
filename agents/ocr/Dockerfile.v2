@@ -20,11 +20,11 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 RUN pip install --no-cache-dir numpy==1.24.3
 
 # Copy and install requirements
-COPY agents/ocr/requirements.v2.txt requirements.txt
+COPY agents/ocr/requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
-COPY agents/ocr/ocr_agent_v2.py ocr_agent.py
+COPY agents/ocr/ocr_agent.py ocr_agent.py
 
 # Create necessary directories
 RUN mkdir -p /app/logs /data
