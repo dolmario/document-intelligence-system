@@ -1,5 +1,5 @@
 {
-  "name": "Document Processing V2",
+  "name": "My workflow",
   "nodes": [
     {
       "parameters": {
@@ -9,39 +9,64 @@
       },
       "name": "Document Upload",
       "type": "n8n-nodes-base.webhook",
-      "position": [250, 300],
-      "typeVersion": 1
+      "position": [0, 0],
+      "typeVersion": 1,
+      "id": "1f7ff61a-1629-4790-be9e-a4d06e28ae05",
+      "webhookId": "ac847e3f-8cee-4467-a3b5-182a7387d509"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare data for SQL injection-safe insertion\nconst item = $input.first().json;\n\n// Escape single quotes in strings\nfunction escapeSql(str) {\n  return str ? str.toString().replace(/'/g, \"''\") : '';\n}\n\n// Build the SQL query with escaped values\nconst fileName = escapeSql(item.fileName);\nconst fileType = escapeSql(item.fileType);\nconst metadata = JSON.stringify(item.metadata || {});\n\nreturn [{\n  fileName: fileName,\n  fileType: fileType,\n  metadata: metadata,\n  sql: `INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), '${fileName}', '${fileType}', '${metadata}'::jsonb) RETURNING id`\n}];"
+      },
+      "name": "Prepare SQL",
+      "type": "n8n-nodes-base.function",
+      "position": [200, 0],
+      "typeVersion": 1,
+      "id": "prepare-sql-node"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), '{{ $json.fileName }}', '{{ $json.fileType }}', '{{ JSON.stringify($json.metadata) }}'::jsonb) RETURNING id",
+        "query": "={{ $json.sql }}",
         "additionalFields": {}
       },
       "name": "Save to DB",
       "type": "n8n-nodes-base.postgres",
-      "position": [450, 300],
+      "position": [400, 0],
       "typeVersion": 1,
+      "id": "4988e7d4-1d87-4989-b814-23de67af5dbe",
       "credentials": {
         "postgres": {
-          "id": "1",
-          "name": "DocIntel DB"
+          "id": "qYteelIvcCtq3rcj",
+          "name": "Postgres account"
         }
       }
     },
     {
       "parameters": {
+        "functionCode": "const docId = $input.first().json[0].id;\n\nreturn [{\n  document_id: docId,\n  sql: `INSERT INTO processing_queue (document_id, task_type, priority) VALUES ('${docId}', 'extract', 5)`\n}];"
+      },
+      "name": "Prepare Queue SQL",
+      "type": "n8n-nodes-base.function",
+      "position": [600, 0],
+      "typeVersion": 1,
+      "id": "prepare-queue-sql"
+    },
+    {
+      "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO processing_queue (document_id, task_type, priority) VALUES ('{{ $json.id }}', 'extract', 5)"
+        "query": "={{ $json.sql }}",
+        "additionalFields": {}
       },
       "name": "Queue for Processing",
       "type": "n8n-nodes-base.postgres",
-      "position": [650, 300],
+      "position": [800, 0],
       "typeVersion": 1,
+      "id": "7a50b50f-ab4b-4d6d-9d1a-c4bda0be642a",
       "credentials": {
         "postgres": {
-          "id": "1",
-          "name": "DocIntel DB"
+          "id": "qYteelIvcCtq3rcj",
+          "name": "Postgres account"
         }
       }
     },
@@ -50,37 +75,39 @@
         "triggerTimes": {
           "item": [
             {
-              "hour": 3,
-              "minute": 0
+              "hour": 3
             }
           ]
         }
       },
       "name": "Night Job Trigger",
       "type": "n8n-nodes-base.cron",
-      "position": [250, 500],
-      "typeVersion": 1
+      "position": [0, 208],
+      "typeVersion": 1,
+      "id": "117da39f-994f-446b-bc17-ba2485fc440f"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id WHERE c.status = 'precleaned' AND d.status != 'deleted' LIMIT 100"
+        "query": "SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id WHERE c.status = 'precleaned' AND d.status != 'deleted' LIMIT 100",
+        "additionalFields": {}
       },
       "name": "Get Chunks for Enhancement",
       "type": "n8n-nodes-base.postgres",
-      "position": [450, 500],
+      "position": [208, 208],
       "typeVersion": 1,
+      "id": "e65bbf26-7478-404d-9815-bfff63f340d9",
       "credentials": {
         "postgres": {
-          "id": "1",
-          "name": "DocIntel DB"
+          "id": "qYteelIvcCtq3rcj",
+          "name": "Postgres account"
         }
       }
     },
     {
       "parameters": {
-        "url": "http://ollama:11434/api/generate",
         "method": "POST",
+        "url": "http://ollama:11434/api/generate",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -97,33 +124,47 @@
               "value": false
             }
           ]
-        }
+        },
+        "options": {}
       },
       "name": "LLM Enhancement",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [650, 500],
-      "typeVersion": 3
+      "position": [400, 208],
+      "typeVersion": 3,
+      "id": "e84e9584-6993-4173-98e1-63c9ad0fe399"
+    },
+    {
+      "parameters": {
+        "functionCode": "const chunk = $input.first().json;\nconst response = chunk.response || chunk.text || '';\nconst chunkId = chunk.id;\n\nreturn [{\n  id: chunkId,\n  sql: `UPDATE chunks SET content = '${response.replace(/'/g, \"''\") }', status = 'enhanced', enhanced_at = NOW() WHERE id = '${chunkId}'`\n}];"
+      },
+      "name": "Prepare Enhanced SQL",
+      "type": "n8n-nodes-base.function",
+      "position": [600, 208],
+      "typeVersion": 1,
+      "id": "prepare-enhanced-sql"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "UPDATE chunks SET content = '{{ $json.response }}', status = 'enhanced', enhanced_at = NOW() WHERE id = '{{ $json.id }}'"
+        "query": "={{ $json.sql }}",
+        "additionalFields": {}
       },
       "name": "Save Enhanced",
       "type": "n8n-nodes-base.postgres",
-      "position": [850, 500],
+      "position": [800, 208],
       "typeVersion": 1,
+      "id": "1e1b90c0-59f6-4d43-96fa-d3dc2553e811",
       "credentials": {
         "postgres": {
-          "id": "1",
-          "name": "DocIntel DB"
+          "id": "qYteelIvcCtq3rcj",
+          "name": "Postgres account"
         }
       }
     },
     {
       "parameters": {
-        "url": "http://ollama:11434/api/embeddings",
         "method": "POST",
+        "url": "http://ollama:11434/api/embeddings",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -136,17 +177,19 @@
               "value": "={{ $json.content }}"
             }
           ]
-        }
+        },
+        "options": {}
       },
       "name": "Generate Embedding",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1050, 500],
-      "typeVersion": 3
+      "position": [1000, 208],
+      "typeVersion": 3,
+      "id": "b29861ca-d255-4161-b96b-92cdefc52a2f"
     },
     {
       "parameters": {
-        "url": "http://qdrant:6333/collections/documents/points",
         "method": "PUT",
+        "url": "http://qdrant:6333/collections/documents/points",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -155,12 +198,14 @@
               "value": "[{\"id\": \"{{ $json.id }}\", \"vector\": {{ JSON.stringify($json.embedding) }}, \"payload\": {\"chunk_id\": \"{{ $json.id }}\"}}]"
             }
           ]
-        }
+        },
+        "options": {}
       },
       "name": "Store in Qdrant",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1250, 500],
-      "typeVersion": 3
+      "position": [1200, 208],
+      "typeVersion": 3,
+      "id": "5481c49a-afc4-47ee-b0bc-8fc9598218a6"
     },
     {
       "parameters": {
@@ -172,19 +217,33 @@
             },
             {
               "name": "document_id",
-              "value": "={{ $node['Save to DB'].json.id }}"
+              "value": "={{ $node['Save to DB'].json[0].id }}"
             }
           ]
-        }
+        },
+        "options": {}
       },
       "name": "Response",
       "type": "n8n-nodes-base.set",
-      "position": [850, 300],
-      "typeVersion": 1
+      "position": [1000, 0],
+      "typeVersion": 1,
+      "id": "ac902019-c665-4bc9-b140-774ce9a690dc"
     }
   ],
+  "pinData": {},
   "connections": {
     "Document Upload": {
+      "main": [
+        [
+          {
+            "node": "Prepare SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare SQL": {
       "main": [
         [
           {
@@ -196,6 +255,17 @@
       ]
     },
     "Save to DB": {
+      "main": [
+        [
+          {
+            "node": "Prepare Queue SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Queue SQL": {
       "main": [
         [
           {
@@ -243,6 +313,17 @@
       "main": [
         [
           {
+            "node": "Prepare Enhanced SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Enhanced SQL": {
+      "main": [
+        [
+          {
             "node": "Save Enhanced",
             "type": "main",
             "index": 0
@@ -273,7 +354,15 @@
       ]
     }
   },
+  "active": true,
   "settings": {
     "executionOrder": "v1"
-  }
+  },
+  "versionId": "ff05ffd2-a8b0-4dd4-b50b-7aec6e478272",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "92268cf0e1ac5f3e7215c6d8377622f8297127868485b08c2d2ff147c192b0b2"
+  },
+  "id": "9zVxCnsXlCqxK6p1",
+  "tags": []
 }
