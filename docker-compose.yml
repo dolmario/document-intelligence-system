@@ -58,7 +58,7 @@ services:
       - ./data:/data:ro
       - ./logs:/app/logs
     environment:
-      DATABASE_URL: postgresql://docintel:docintel123@postgres:5432/docintel@postgres:5432/docintel
+      DATABASE_URL: postgresql://docintel:docintel123@postgres:5432/docintel
       TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
       CHUNK_SIZE: ${CHUNK_SIZE:-1000}
       PYTHONUNBUFFERED: 1
