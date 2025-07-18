@@ -120,12 +120,13 @@ async def root():
             "/search": "Semantic search",
             "/upload": "Document upload",
             "/feedback": "Learning feedback",
-            "/stats": "System statistics"
+            "/stats": "System statistics",
+            "/v1/chat/completions": "OpenAI-compatible chat",
+            "/v1/models": "Available models"
         }
     }
 
-@app.post("/search", response_model=List[SearchResult])
-async def search(request: SearchRequest):
+async def execute_search(request: SearchRequest) -> List[SearchResult]:
     try:
         # Get embedding from Ollama
         embedding = await get_embedding(request.query)
@@ -171,6 +172,13 @@ async def search(request: SearchRequest):
         
     except Exception as e:
         logger.error(f"Search error: {e}")
+        raise
+
+@app.post("/search", response_model=List[SearchResult])
+async def search_endpoint(request: SearchRequest):
+    try:
+        return await execute_search(request)
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload")
@@ -244,6 +252,59 @@ async def get_embedding(text: str):
             import hashlib
             hash_val = int(hashlib.md5(text.encode()).hexdigest(), 16)
             return [float((hash_val >> i) & 1) for i in range(384)]
+
+# OpenAI-compatible endpoints
+@app.post("/v1/chat/completions")
+async def chat_completions(request: Dict):
+    """OpenAI-kompatible Chat API"""
+    try:
+        messages = request.get("messages", [])
+        user_message = messages[-1].get("content", "") if messages else ""
+        
+        # Document Search
+        search_request = SearchRequest(query=user_message, limit=3)
+        search_results = await execute_search(search_request)
+        
+        # Format response
+        content = f"📚 Dokumentensuche für '{user_message}':\n\n"
+        if search_results:
+            for i, doc in enumerate(search_results, 1):
+                content += f"{i}. **{doc.document_name}**\n{doc.content[:150]}...\n\n"
+        else:
+            content = "🔍 Keine Dokumente gefunden."
+        
+        return {
+            "choices": [{
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop"
+            }],
+            "model": "document-search",
+            "object": "chat.completion"
+        }
+    except Exception as e:
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant", 
+                    "content": f"⚠️ Fehler bei der Dokumentensuche: {str(e)}"
+                },
+                "finish_reason": "stop"
+            }]
+        }
+
+@app.get("/v1/models")
+async def get_models():
+    """OpenAI-kompatible Models für OpenWebUI"""
+    return {
+        "data": [
+            {
+                "id": "document-search",
+                "object": "model",
+                "owned_by": "system",
+                "created": 1234567890
+            }
+        ]
+    }
 
 if __name__ == "__main__":
     import uvicorn
