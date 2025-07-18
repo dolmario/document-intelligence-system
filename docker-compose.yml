@@ -20,6 +20,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
 
   qdrant:
     image: qdrant/qdrant
@@ -32,6 +33,21 @@ services:
       - doc_network
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: doc-intel-ollama
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h
+      OLLAMA_HOST: 0.0.0.0
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - doc_network
+    restart: unless-stopped
 
   ocr_agent:
     build:
@@ -67,9 +83,12 @@ services:
       DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
       PYTHONUNBUFFERED: 1
     depends_on:
-      - postgres
-      - qdrant
-      - ollama
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      ollama:
+        condition: service_started
     networks:
       - doc_network
     restart: unless-stopped
@@ -93,14 +112,10 @@ services:
       N8N_HOST: 0.0.0.0
       N8N_PORT: 5678
       N8N_PROTOCOL: http
-      WEBHOOK_URL: http://n8n:5678/
+      WEBHOOK_URL: http://localhost:5678/
       GENERIC_TIMEZONE: ${TZ:-Europe/Berlin}
-      # Neue Variablen hinzufügen
       N8N_RUNNERS_ENABLED: "true"
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
-      N8N_WEBHOOK_AUTH_ACTIVE: "true"
-      N8N_WEBHOOK_AUTH_USER: "webhook_user"
-      N8N_WEBHOOK_AUTH_PASSWORD: "${N8N_WEBHOOK_PASSWORD:-changeme}"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "false"
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n/workflows:/workflows
@@ -111,27 +126,6 @@ services:
     networks:
       - doc_network
     restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:latest
-    container_name: doc-intel-ollama
-    ports:
-      - "11434:11434"
-    environment:
-      OLLAMA_KEEP_ALIVE: 24h
-      OLLAMA_HOST: 0.0.0.0
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - doc_network
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   open-webui:
     image: ghcr.io/open-webui/open-webui:main

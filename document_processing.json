@@ -1,0 +1,267 @@
+{
+  "name": "Document Processing V2 - Fixed",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "doc-upload",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Document Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [240, 300],
+      "typeVersion": 1,
+      "id": "webhook-upload",
+      "webhookId": "doc-upload-webhook-2024"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Validate incoming data\nconst item = $input.first().json;\n\nif (!item.fileName || !item.fileContent) {\n  throw new Error('fileName and fileContent are required');\n}\n\n// Prepare safe SQL parameters\nconst fileName = item.fileName.toString().substring(0, 500);\nconst fileType = (item.fileType || 'unknown').toString().substring(0, 50);\nconst metadata = JSON.stringify({\n  source: 'n8n',\n  uploadedAt: new Date().toISOString(),\n  ...item.metadata\n});\n\nreturn [{\n  fileName: fileName,\n  fileType: fileType,\n  fileContent: item.fileContent,\n  metadata: metadata\n}];"
+      },
+      "name": "Validate & Prepare",
+      "type": "n8n-nodes-base.function",
+      "position": [440, 300],
+      "typeVersion": 1,
+      "id": "validate-prepare"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sources (name, type, config) VALUES ('n8n_upload', 'n8n', '{}'::jsonb) ON CONFLICT (name, type) DO NOTHING",
+        "additionalFields": {}
+      },
+      "name": "Ensure Source",
+      "type": "n8n-nodes-base.postgres",
+      "position": [640, 300],
+      "typeVersion": 1,
+      "id": "ensure-source",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), $1, $2, $3::jsonb) RETURNING id",
+        "queryParams": "=[ $json.fileName, $json.fileType, $json.metadata ]",
+        "additionalFields": {}
+      },
+      "name": "Save Document",
+      "type": "n8n-nodes-base.postgres",
+      "position": [840, 300],
+      "typeVersion": 1,
+      "id": "save-document",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE documents SET metadata = jsonb_set(metadata, '{file_content}', to_jsonb($2::text)) WHERE id = $1",
+        "queryParams": "=[ $json.id, $('Validate & Prepare').item.json.fileContent ]",
+        "additionalFields": {}
+      },
+      "name": "Store File Content",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1040, 300],
+      "typeVersion": 1,
+      "id": "store-content",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_queue (document_id, task_type, priority) VALUES ($1, 'extract', 8)",
+        "queryParams": "=[ $('Save Document').item.json.id ]",
+        "additionalFields": {}
+      },
+      "name": "Queue for Processing",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1240, 300],
+      "typeVersion": 1,
+      "id": "queue-processing",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "success"
+            },
+            {
+              "name": "message", 
+              "value": "Document uploaded successfully"
+            },
+            {
+              "name": "document_id",
+              "value": "={{ $('Save Document').item.json.id }}"
+            },
+            {
+              "name": "webhook_url",
+              "value": "http://localhost:5678/webhook/doc-upload"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Success Response",
+      "type": "n8n-nodes-base.set",
+      "position": [1440, 300],
+      "typeVersion": 1,
+      "id": "success-response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1640, 300],
+      "typeVersion": 1,
+      "id": "webhook-response"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "error"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.error || 'Unknown error occurred' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Error Response",
+      "type": "n8n-nodes-base.set",
+      "position": [1440, 500],
+      "typeVersion": 1,
+      "id": "error-response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "responseCode": 400
+      },
+      "name": "Error Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1640, 500],
+      "typeVersion": 1,
+      "id": "error-webhook-response"
+    }
+  ],
+  "connections": {
+    "Document Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Prepare": {
+      "main": [
+        [
+          {
+            "node": "Ensure Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Source": {
+      "main": [
+        [
+          {
+            "node": "Save Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Document": {
+      "main": [
+        [
+          {
+            "node": "Store File Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store File Content": {
+      "main": [
+        [
+          {
+            "node": "Queue for Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue for Processing": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "fixed-v2-2024",
+  "meta": {
+    "instanceId": "doc-intel-fixed"
+  },
+  "tags": ["document", "upload", "fixed"]
+}
