@@ -1,0 +1,334 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "doc-upload",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Document Upload",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        -160,
+        16
+      ],
+      "typeVersion": 1,
+      "id": "ee599674-5506-4749-8fa8-bb1893a85820",
+      "webhookId": "ac847e3f-8cee-4467-a3b5-182a7387d509"
+    },
+    {
+      "parameters": {
+        "functionCode": "const item = $input.first().json;\n\nif (!item.fileName) {\n  throw new Error('fileName is required');\n}\n\n// File type validation\nconst validTypes = ['pdf', 'docx', 'txt', 'png', 'jpg', 'jpeg', 'tiff'];\nconst fileExt = item.fileName.split('.').pop().toLowerCase();\n\nif (!validTypes.includes(fileExt)) {\n  throw new Error(`Unsupported file type: ${fileExt}`);\n}\n\nconst fileName = item.fileName.toString().substring(0, 500);\nconst fileType = (item.fileType || fileExt).toString().substring(0, 50);\nconst metadata = JSON.stringify({\n  ...item.metadata || {},\n  file_content: item.fileContent || null,\n  source: 'n8n'\n});\n\nreturn [{\n  fileName: fileName,\n  fileType: fileType,\n  metadata: metadata\n}];"
+      },
+      "name": "Prepare SQL",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        0,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "0312c94a-479a-44b5-8cce-9e0e6800d28b"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), $1, $2, $3::jsonb) RETURNING id",
+        "additionalFields": {}
+      },
+      "name": "Save to DB",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        192,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "aaec26fa-3453-4979-bf5b-9944d1b3e1aa",
+      "credentials": {
+        "postgres": {
+          "id": "hmqLrdY71tTZPEqJ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const docId = $input.first().json[0].id;\nreturn [{\n  document_id: docId\n}];"
+      },
+      "name": "Prepare Queue SQL",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        400,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "5ee89330-4cf3-451c-887d-3749871428b4"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_queue (document_id, task_type, priority) VALUES ($1, 'extract', 5)",
+        "additionalFields": {}
+      },
+      "name": "Queue for Processing",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        592,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "e671380f-c677-4172-8885-67d721ee8a3d",
+      "credentials": {
+        "postgres": {
+          "id": "hmqLrdY71tTZPEqJ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "success"
+            },
+            {
+              "name": "document_id",
+              "value": "={{ $('Save to DB').json[0].id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        800,
+        0
+      ],
+      "typeVersion": 1,
+      "id": "d41fde46-2392-432e-9171-ce2ecd46dd3c"
+    },
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "hour": 3
+            }
+          ]
+        }
+      },
+      "name": "Night Job Trigger",
+      "type": "n8n-nodes-base.cron",
+      "position": [
+        -208,
+        208
+      ],
+      "typeVersion": 1,
+      "id": "41fcd6fc-0ec2-4177-9fe9-498568abaf14"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id WHERE c.status = 'precleaned' AND d.status != 'deleted' LIMIT 100",
+        "additionalFields": {}
+      },
+      "name": "Get Chunks for Enhancement",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        0,
+        208
+      ],
+      "typeVersion": 1,
+      "id": "ca82e2bd-f245-4593-b99c-2167b4ff860e",
+      "credentials": {
+        "postgres": {
+          "id": "hmqLrdY71tTZPEqJ",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
+            },
+            {
+              "name": "prompt",
+              "value": "Verbessere den folgenden Text. Korrigiere Rechtschreibfehler, verbessere die Struktur, aber behalte alle wichtigen Informationen:\\n\\n{{ $json.content }}\\n\\nVerbesserte Version:"
+            },
+            {
+              "name": "stream",
+              "value": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "LLM Enhancement",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        192,
+        208
+      ],
+      "typeVersion": 3,
+      "id": "809187ed-ce4a-42ef-a3e7-0ea5bb3b9570"
+    },
+    {
+      "parameters": {
+        "functionCode": "const chunk = $input.first().json;\nconst response = chunk.response || chunk.text || '';\nconst chunkId = chunk.id;\n\nreturn [{\n  id: chunkId,\n  enhanced_content: response\n}];"
+      },
+      "name": "Prepare Enhanced SQL",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        400,
+        208
+      ],
+      "typeVersion": 1,
+      "id": "4343f765-c684-49df-b1de-380a2d936970"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE chunks SET content = $2, status = 'enhanced', enhanced_at = NOW() WHERE id = $1",
+        "additionalFields": {}
+      },
+      "name": "Save Enhanced",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        592,
+        208
+      ],
+      "typeVersion": 1,
+      "id": "838739b4-bdac-4bb7-879d-93b7ad7d2727",
+      "credentials": {
+        "postgres": {
+          "id": "hmqLrdY71tTZPEqJ",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Document Upload": {
+      "main": [
+        [
+          {
+            "node": "Prepare SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare SQL": {
+      "main": [
+        [
+          {
+            "node": "Save to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to DB": {
+      "main": [
+        [
+          {
+            "node": "Prepare Queue SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Queue SQL": {
+      "main": [
+        [
+          {
+            "node": "Queue for Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue for Processing": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Night Job Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Chunks for Enhancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Chunks for Enhancement": {
+      "main": [
+        [
+          {
+            "node": "LLM Enhancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Enhancement": {
+      "main": [
+        [
+          {
+            "node": "Prepare Enhanced SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Enhanced SQL": {
+      "main": [
+        [
+          {
+            "node": "Save Enhanced",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "f2ddfb86-257a-4ed4-a452-bdc11e1d9407",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "92268cf0e1ac5f3e7215c6d8377622f8297127868485b08c2d2ff147c192b0b2"
+  },
+  "id": "qBXbSdCI8Ty7B441",
+  "tags": []
+}
