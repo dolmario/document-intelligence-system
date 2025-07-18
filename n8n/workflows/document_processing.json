@@ -1,248 +1,104 @@
 {
-  "name": "My workflow",
+  "name": "Document Processing V2 - Fixed",
   "nodes": [
     {
       "parameters": {
-        "functionCode": "// Prepare data for SQL injection-safe insertion\nconst item = $input.first().json;\n\n// Escape single quotes in strings\nfunction escapeSql(str) {\n  return str ? str.toString().replace(/'/g, \"''\") : '';\n}\n\n// Build the SQL query with escaped values\nconst fileName = escapeSql(item.fileName);\nconst fileType = escapeSql(item.fileType);\nconst metadata = JSON.stringify(item.metadata || {});\n\nreturn [{\n  fileName: fileName,\n  fileType: fileType,\n  metadata: metadata,\n  sql: `INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), '${fileName}', '${fileType}', '${metadata}'::jsonb) RETURNING id`\n}];"
+        "httpMethod": "POST",
+        "path": "doc-upload",
+        "responseMode": "responseNode",
+        "options": {}
       },
-      "name": "Prepare SQL",
-      "type": "n8n-nodes-base.function",
-      "position": [
-        1168,
-        32
-      ],
+      "name": "Document Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [240, 300],
       "typeVersion": 1,
-      "id": "81c1b6c9-ad41-47d5-83c8-81d0123c78df"
+      "id": "webhook-upload",
+      "webhookId": "doc-upload-webhook-2024"
     },
     {
       "parameters": {
-        "functionCode": "const docId = $input.first().json[0].id;\n\nreturn [{\n  document_id: docId,\n  sql: `INSERT INTO processing_queue (document_id, task_type, priority) VALUES ('${docId}', 'extract', 5)`\n}];"
+        "functionCode": "// Validate incoming data\nconst item = $input.first().json;\n\nif (!item.fileName || !item.fileContent) {\n  throw new Error('fileName and fileContent are required');\n}\n\n// Prepare safe SQL parameters\nconst fileName = item.fileName.toString().substring(0, 500);\nconst fileType = (item.fileType || 'unknown').toString().substring(0, 50);\nconst metadata = JSON.stringify({\n  source: 'n8n',\n  uploadedAt: new Date().toISOString(),\n  ...item.metadata\n});\n\nreturn [{\n  fileName: fileName,\n  fileType: fileType,\n  fileContent: item.fileContent,\n  metadata: metadata\n}];"
       },
-      "name": "Prepare Queue SQL",
+      "name": "Validate & Prepare",
       "type": "n8n-nodes-base.function",
-      "position": [
-        1568,
-        32
-      ],
+      "position": [440, 300],
       "typeVersion": 1,
-      "id": "94ea2e6d-0b42-4319-a0f7-c18ce3f247af"
+      "id": "validate-prepare"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "={{ $json.sql }}",
+        "query": "INSERT INTO sources (name, type, config) VALUES ('n8n_upload', 'n8n', '{}'::jsonb) ON CONFLICT (name, type) DO NOTHING",
+        "additionalFields": {}
+      },
+      "name": "Ensure Source",
+      "type": "n8n-nodes-base.postgres",
+      "position": [640, 300],
+      "typeVersion": 1,
+      "id": "ensure-source",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO documents (source_id, original_name, file_type, metadata) VALUES ((SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), $1, $2, $3::jsonb) RETURNING id",
+        "queryParams": "=[ $json.fileName, $json.fileType, $json.metadata ]",
+        "additionalFields": {}
+      },
+      "name": "Save Document",
+      "type": "n8n-nodes-base.postgres",
+      "position": [840, 300],
+      "typeVersion": 1,
+      "id": "save-document",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE documents SET metadata = jsonb_set(metadata, '{file_content}', to_jsonb($2::text)) WHERE id = $1",
+        "queryParams": "=[ $json.id, $('Validate & Prepare').item.json.fileContent ]",
+        "additionalFields": {}
+      },
+      "name": "Store File Content",
+      "type": "n8n-nodes-base.postgres",
+      "position": [1040, 300],
+      "typeVersion": 1,
+      "id": "store-content",
+      "credentials": {
+        "postgres": {
+          "id": "postgres-creds",
+          "name": "DocIntel DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_queue (document_id, task_type, priority) VALUES ($1, 'extract', 8)",
+        "queryParams": "=[ $('Save Document').item.json.id ]",
         "additionalFields": {}
       },
       "name": "Queue for Processing",
       "type": "n8n-nodes-base.postgres",
-      "position": [
-        1760,
-        32
-      ],
+      "position": [1240, 300],
       "typeVersion": 1,
-      "id": "3a517dcf-5b13-45c6-ba37-caeb3a6c89f4",
+      "id": "queue-processing",
       "credentials": {
         "postgres": {
-          "id": "qYteelIvcCtq3rcj",
-          "name": "Postgres account"
+          "id": "postgres-creds",
+          "name": "DocIntel DB"
         }
       }
-    },
-    {
-      "parameters": {
-        "functionCode": "const chunk = $input.first().json;\nconst response = chunk.response || chunk.text || '';\nconst chunkId = chunk.id;\n\nreturn [{\n  id: chunkId,\n  sql: `UPDATE chunks SET content = '${response.replace(/'/g, \"''\") }', status = 'enhanced', enhanced_at = NOW() WHERE id = '${chunkId}'`\n}];"
-      },
-      "name": "Prepare Enhanced SQL",
-      "type": "n8n-nodes-base.function",
-      "position": [
-        1568,
-        240
-      ],
-      "typeVersion": 1,
-      "id": "299d02ad-6c16-43db-9df3-4144564a166e"
-    },
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "doc-webhook",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "name": "Document Upload1",
-      "type": "n8n-nodes-base.webhook",
-      "position": [
-        1008,
-        48
-      ],
-      "typeVersion": 1,
-      "id": "ac4467ce-b2f3-4635-a5e9-b10f33d94fcd",
-      "webhookId": "ac847e3f-8cee-4467-a3b5-182a7387d509"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "={{ $json.sql }}",
-        "additionalFields": {}
-      },
-      "name": "Save to DB1",
-      "type": "n8n-nodes-base.postgres",
-      "position": [
-        1360,
-        32
-      ],
-      "typeVersion": 1,
-      "id": "9f5c4013-51ef-483a-baec-502123dc5fd1",
-      "credentials": {
-        "postgres": {
-          "id": "qYteelIvcCtq3rcj",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "triggerTimes": {
-          "item": [
-            {
-              "hour": 3
-            }
-          ]
-        }
-      },
-      "name": "Night Job Trigger1",
-      "type": "n8n-nodes-base.cron",
-      "position": [
-        960,
-        240
-      ],
-      "typeVersion": 1,
-      "id": "fcfacad5-550a-4b2c-9a54-b1220c5739cf"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT c.* FROM chunks c JOIN documents d ON c.document_id = d.id WHERE c.status = 'precleaned' AND d.status != 'deleted' LIMIT 100",
-        "additionalFields": {}
-      },
-      "name": "Get Chunks for Enhancement1",
-      "type": "n8n-nodes-base.postgres",
-      "position": [
-        1168,
-        240
-      ],
-      "typeVersion": 1,
-      "id": "794bd438-9afc-4920-9b91-a93397d320fe",
-      "credentials": {
-        "postgres": {
-          "id": "qYteelIvcCtq3rcj",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://ollama:11434/api/generate",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "model",
-              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
-            },
-            {
-              "name": "prompt",
-              "value": "Verbessere den folgenden Text. Korrigiere Rechtschreibfehler, verbessere die Struktur, aber behalte alle wichtigen Informationen:\\n\\n{{ $json.content }}\\n\\nVerbesserte Version:"
-            },
-            {
-              "name": "stream",
-              "value": false
-            }
-          ]
-        },
-        "options": {}
-      },
-      "name": "LLM Enhancement1",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [
-        1360,
-        240
-      ],
-      "typeVersion": 3,
-      "id": "5a987613-56f3-420c-a0ae-97215a7e319c"
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "={{ $json.sql }}",
-        "additionalFields": {}
-      },
-      "name": "Save Enhanced1",
-      "type": "n8n-nodes-base.postgres",
-      "position": [
-        1760,
-        240
-      ],
-      "typeVersion": 1,
-      "id": "ae039781-c39f-488e-8d8b-4454914edd05",
-      "credentials": {
-        "postgres": {
-          "id": "qYteelIvcCtq3rcj",
-          "name": "Postgres account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://ollama:11434/api/embeddings",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "model",
-              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
-            },
-            {
-              "name": "prompt",
-              "value": "={{ $json.content }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "name": "Generate Embedding1",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [
-        1968,
-        240
-      ],
-      "typeVersion": 3,
-      "id": "9d6f7f55-92ee-4ec6-8df5-6048f3b2e32d"
-    },
-    {
-      "parameters": {
-        "method": "PUT",
-        "url": "http://qdrant:6333/collections/documents/points",
-        "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "points",
-              "value": "[{\"id\": \"{{ $json.id }}\", \"vector\": {{ JSON.stringify($json.embedding) }}, \"payload\": {\"chunk_id\": \"{{ $json.id }}\"}}]"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "name": "Store in Qdrant1",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [
-        2160,
-        240
-      ],
-      "typeVersion": 3,
-      "id": "a7e96ccf-8868-43c7-80bd-e13338c11df0"
     },
     {
       "parameters": {
@@ -253,37 +109,119 @@
               "value": "success"
             },
             {
+              "name": "message", 
+              "value": "Document uploaded successfully"
+            },
+            {
               "name": "document_id",
-              "value": "={{ $node['Save to DB1'].json[0].id }}"
+              "value": "={{ $('Save Document').item.json.id }}"
+            },
+            {
+              "name": "webhook_url",
+              "value": "http://localhost:5678/webhook/doc-upload"
             }
           ]
         },
         "options": {}
       },
-      "name": "Response1",
+      "name": "Success Response",
       "type": "n8n-nodes-base.set",
-      "position": [
-        1968,
-        32
-      ],
+      "position": [1440, 300],
       "typeVersion": 1,
-      "id": "c5bfe6db-8c95-42b9-b990-3f7718b0e4d3"
+      "id": "success-response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}"
+      },
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1640, 300],
+      "typeVersion": 1,
+      "id": "webhook-response"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "status",
+              "value": "error"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.error || 'Unknown error occurred' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Error Response",
+      "type": "n8n-nodes-base.set",
+      "position": [1440, 500],
+      "typeVersion": 1,
+      "id": "error-response"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "responseCode": 400
+      },
+      "name": "Error Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [1640, 500],
+      "typeVersion": 1,
+      "id": "error-webhook-response"
     }
   ],
-  "pinData": {},
   "connections": {
-    "Prepare SQL": {
+    "Document Upload Webhook": {
       "main": [
         [
           {
-            "node": "Save to DB1",
+            "node": "Validate & Prepare",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Queue SQL": {
+    "Validate & Prepare": {
+      "main": [
+        [
+          {
+            "node": "Ensure Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure Source": {
+      "main": [
+        [
+          {
+            "node": "Save Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Document": {
+      "main": [
+        [
+          {
+            "node": "Store File Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store File Content": {
       "main": [
         [
           {
@@ -298,95 +236,18 @@
       "main": [
         [
           {
-            "node": "Response1",
+            "node": "Success Response",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Enhanced SQL": {
+    "Success Response": {
       "main": [
         [
           {
-            "node": "Save Enhanced1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Document Upload1": {
-      "main": [
-        [
-          {
-            "node": "Prepare SQL",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save to DB1": {
-      "main": [
-        [
-          {
-            "node": "Prepare Queue SQL",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Night Job Trigger1": {
-      "main": [
-        [
-          {
-            "node": "Get Chunks for Enhancement1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Chunks for Enhancement1": {
-      "main": [
-        [
-          {
-            "node": "LLM Enhancement1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "LLM Enhancement1": {
-      "main": [
-        [
-          {
-            "node": "Prepare Enhanced SQL",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Enhanced1": {
-      "main": [
-        [
-          {
-            "node": "Generate Embedding1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Generate Embedding1": {
-      "main": [
-        [
-          {
-            "node": "Store in Qdrant1",
+            "node": "Webhook Response",
             "type": "main",
             "index": 0
           }
@@ -394,15 +255,13 @@
       ]
     }
   },
-  "active": true,
+  "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "5ae5e03d-2150-47d7-b8b3-336f739a6dfb",
+  "versionId": "fixed-v2-2024",
   "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "92268cf0e1ac5f3e7215c6d8377622f8297127868485b08c2d2ff147c192b0b2"
+    "instanceId": "doc-intel-fixed"
   },
-  "id": "9zVxCnsXlCqxK6p1",
-  "tags": []
+  "tags": ["document", "upload", "fixed"]
 }
