@@ -1,5 +1,5 @@
 {
-  "name": "My workflow - Extended",
+  "name": "My workflow",
   "nodes": [
     {
       "parameters": {
@@ -13,7 +13,10 @@
       },
       "name": "Night Job Trigger1",
       "type": "n8n-nodes-base.cron",
-      "position": [1024, 320],
+      "position": [
+        1024,
+        320
+      ],
       "typeVersion": 1,
       "id": "2e2787b4-8c69-49cd-8bfe-380d3e9fb8fb"
     },
@@ -25,7 +28,10 @@
       },
       "name": "Get Chunks for Enhancement1",
       "type": "n8n-nodes-base.postgres",
-      "position": [1232, 320],
+      "position": [
+        1232,
+        320
+      ],
       "typeVersion": 1,
       "id": "372e28f0-6d0c-4d8c-97a8-016c44cba1fc",
       "credentials": {
@@ -60,7 +66,10 @@
       },
       "name": "LLM Enhancement1",
       "type": "n8n-nodes-base.httpRequest",
-      "position": [1424, 320],
+      "position": [
+        1424,
+        320
+      ],
       "typeVersion": 3,
       "id": "86f47100-56cf-4b8b-8395-a1e1f11fc0d3"
     },
@@ -70,7 +79,10 @@
       },
       "name": "Prepare Enhanced SQL1",
       "type": "n8n-nodes-base.function",
-      "position": [1632, 320],
+      "position": [
+        1632,
+        320
+      ],
       "typeVersion": 1,
       "id": "747ab86f-c2e9-4f21-94e1-eaa6d4a050be"
     },
@@ -82,7 +94,10 @@
       },
       "name": "Save Enhanced1",
       "type": "n8n-nodes-base.postgres",
-      "position": [1824, 320],
+      "position": [
+        1824,
+        320
+      ],
       "typeVersion": 1,
       "id": "3dcaf5ea-f7f8-4521-b978-648f0e4c1889",
       "credentials": {
@@ -101,7 +116,10 @@
       },
       "name": "Document Upload Webhook",
       "type": "n8n-nodes-base.webhook",
-      "position": [976, -32],
+      "position": [
+        976,
+        -32
+      ],
       "typeVersion": 1,
       "id": "29306c83-3036-44d7-9135-604d856738f9",
       "webhookId": "doc-upload-test-fixed"
@@ -112,7 +130,10 @@
       },
       "name": "Process Document Data",
       "type": "n8n-nodes-base.function",
-      "position": [1184, 32],
+      "position": [
+        1184,
+        32
+      ],
       "typeVersion": 1,
       "id": "1dbe990f-e70e-4624-bc4d-88f2789e39ff"
     },
@@ -124,7 +145,10 @@
       },
       "name": "Webhook Response",
       "type": "n8n-nodes-base.respondToWebhook",
-      "position": [2000, 0],
+      "position": [
+        2000,
+        0
+      ],
       "typeVersion": 1,
       "id": "40f626a6-ac20-451c-aff6-9813c0eb29e5",
       "onError": "continueRegularOutput"
@@ -137,7 +161,10 @@
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [1488, -16],
+      "position": [
+        1488,
+        -16
+      ],
       "id": "78958c32-44a5-451f-aa09-0251cf48616c",
       "name": "Create Document",
       "credentials": {
@@ -155,21 +182,15 @@
       },
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1792, 144],
+      "position": [
+        1792,
+        144
+      ],
       "id": "c7caf887-9f14-4a7f-a367-188228f4a98d",
       "name": "Edit Fields"
-    },
-    {
-      "parameters": {
-        "functionCode": "// OpenWebUI Sync - Simple Version\nconst fs = require('fs');\nconst syncPath = '/app/backend/data/docs/test-sync.txt';\nconst testContent = 'Test sync from N8N to OpenWebUI';\n\ntry {\n  fs.writeFileSync(syncPath, testContent, 'utf8');\n  return [{ sync_status: 'success', file: 'test-sync.txt' }];\n} catch (error) {\n  return [{ sync_status: 'failed', error: error.message }];\n}"
-      },
-      "name": "Simple OpenWebUI Sync",
-      "type": "n8n-nodes-base.function",
-      "position": [2016, 320],
-      "typeVersion": 1,
-      "id": "simple-sync"
     }
   ],
+  "pinData": {},
   "connections": {
     "Night Job Trigger1": {
       "main": [
@@ -209,17 +230,6 @@
         [
           {
             "node": "Save Enhanced1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Save Enhanced1": {
-      "main": [
-        [
-          {
-            "node": "Simple OpenWebUI Sync",
             "type": "main",
             "index": 0
           }
@@ -275,6 +285,11 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "minimal-extension",
-  "id": "qBXbSdCI8Ty7B441"
+  "versionId": "77224092-d2e1-46b7-b61c-07d6233196ff",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "92268cf0e1ac5f3e7215c6d8377622f8297127868485b08c2d2ff147c192b0b2"
+  },
+  "id": "qBXbSdCI8Ty7B441",
+  "tags": []
 }
