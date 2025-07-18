@@ -117,8 +117,8 @@
       "name": "Document Upload Webhook",
       "type": "n8n-nodes-base.webhook",
       "position": [
-        976,
-        -32
+        688,
+        -64
       ],
       "typeVersion": 1,
       "id": "29306c83-3036-44d7-9135-604d856738f9",
@@ -131,8 +131,8 @@
       "name": "Process Document Data",
       "type": "n8n-nodes-base.function",
       "position": [
-        1184,
-        32
+        896,
+        -80
       ],
       "typeVersion": 1,
       "id": "1dbe990f-e70e-4624-bc4d-88f2789e39ff"
@@ -155,15 +155,32 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "WITH new_doc AS (\n  INSERT INTO documents (source_id, original_name, file_type, metadata) \n  VALUES (\n    (SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1), \n    'content-debug.txt', \n    'txt', \n    '{\"file_content\":\"This content should be found by OCR agent\",\"source\":\"n8n\"}'::jsonb\n  )\n  RETURNING id\n)\nINSERT INTO processing_queue (document_id, task_type, priority) \nSELECT id, 'extract', 8 FROM new_doc;\n",
+        "mode": "raw",
+        "jsonOutput": "{\n  \"name\": \"status\",\n  \"value\": \"success\"\n}\n",
         "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1728,
+        -16
+      ],
+      "id": "c7caf887-9f14-4a7f-a367-188228f4a98d",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH new_doc AS (\n  INSERT INTO documents (source_id, original_name, file_type, metadata)\n  VALUES (\n    (SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1),\n    $1, $2, $3::jsonb\n  )\n  RETURNING id\n)\nINSERT INTO processing_queue (document_id, task_type, priority)\nSELECT id, 'extract', 8 FROM new_doc\nRETURNING (SELECT id FROM new_doc) as document_id;\n\n\n",
+        "options": {
+          "queryReplacement": "=[\n  \"{{$json.fileName}}\",\n  \"{{$json.fileType}}\",\n  \"{{$json.metadata}}\"\n]\n\n\n"
+        }
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        1488,
-        -16
+        1440,
+        16
       ],
       "id": "78958c32-44a5-451f-aa09-0251cf48616c",
       "name": "Create Document",
@@ -176,18 +193,16 @@
     },
     {
       "parameters": {
-        "mode": "raw",
-        "jsonOutput": "{\n  \"name\": \"status\",\n  \"value\": \"success\"\n}\n",
-        "options": {}
+        "jsCode": "/// N8N Process Document Data Node \n\nconst item = $input.first().json;\n\nconsole.log('Received item:', JSON.stringify(item, null, 2));\nconsole.log('Available keys:', Object.keys(item));\n\n// Check if this is already processed data (has documentSql)\nif (item.documentSql) {\n  console.log('Data already processed - passing through');\n  \n  // Extract file_content from the documentSql if needed\n  let fileContent = null;\n  if (item.documentSql.includes('file_content')) {\n    const match = item.documentSql.match(/\"file_content\":\"([^\"]+)\"/);\n    if (match) {\n      fileContent = match[1];\n      console.log('Extracted file_content from documentSql:', fileContent.substring(0, 50));\n    }\n  }\n  \n  // Return data with extracted content\n  return [{\n    fileName: item.fileName,\n    fileType: item.fileType,\n    fileContent: fileContent,\n    metadata: {\n      file_content: fileContent,\n      source: 'n8n',\n      uploadedAt: new Date().toISOString(),\n      original_filename: item.fileName,\n      processed: true\n    },\n    status: item.status || 'ready_for_processing'\n  }];\n}\n\n// This is original webhook data - process normally\nconst fileName = item.fileName || item.filename || item.name;\nconst fileType = item.fileType || item.filetype || item.type || 'txt';\nconst fileContent = item.fileContent || item.filecontent || item.content || '';\n\nconsole.log('Processing original webhook data:');\nconsole.log('- fileName:', fileName);\nconsole.log('- fileType:', fileType);\nconsole.log('- fileContent length:', fileContent ? fileContent.length : 'NULL');\n\nif (!fileName) {\n  throw new Error(`fileName missing. Available fields: ${Object.keys(item).join(', ')}`);\n}\n\nif (!fileContent) {\n  throw new Error(`fileContent missing. Available fields: ${Object.keys(item).join(', ')}`);\n}\n\n// Smart content handling - encode to base64 if needed\nlet processedContent = fileContent;\n\nif (fileType === 'txt' || fileType === 'md') {\n  const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;\n  if (!base64Pattern.test(fileContent.replace(/\\s/g, ''))) {\n    processedContent = Buffer.from(fileContent, 'utf8').toString('base64');\n    console.log('Encoded plain text content to base64');\n  }\n}\n\nconst metadata = {\n  ...item.metadata || {},\n  file_content: processedContent,\n  source: 'n8n',\n  uploadedAt: new Date().toISOString(),\n  original_filename: fileName,\n  processed: false,\n  content_type: 'base64'\n};\n\nreturn [{\n  fileName: fileName,\n  fileType: fileType,\n  fileContent: processedContent,\n  metadata: metadata,\n  status: 'ready_for_processing'\n}];"
       },
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        1792,
-        144
+        1136,
+        -128
       ],
-      "id": "c7caf887-9f14-4a7f-a367-188228f4a98d",
-      "name": "Edit Fields"
+      "id": "1a2da520-08ca-4819-9844-9bab1731b696",
+      "name": "Code"
     }
   ],
   "pinData": {},
@@ -251,7 +266,18 @@
       "main": [
         [
           {
-            "node": "Create Document",
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
             "type": "main",
             "index": 0
           }
@@ -269,11 +295,11 @@
         ]
       ]
     },
-    "Edit Fields": {
+    "Code": {
       "main": [
         [
           {
-            "node": "Webhook Response",
+            "node": "Create Document",
             "type": "main",
             "index": 0
           }
@@ -285,7 +311,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "77224092-d2e1-46b7-b61c-07d6233196ff",
+  "versionId": "066188c3-17d0-4f2c-8ba6-bcac5e44b8a8",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "92268cf0e1ac5f3e7215c6d8377622f8297127868485b08c2d2ff147c192b0b2"
