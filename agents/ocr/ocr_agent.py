@@ -19,7 +19,6 @@ import pdf2image
 # Optional imports with fallbacks
 try:
     from docx import Document as DocxDocument
-
     HAS_DOCX = True
 except ImportError:
     HAS_DOCX = False
@@ -27,7 +26,6 @@ except ImportError:
 
 try:
     import pandas as pd
-
     HAS_PANDAS = True
 except ImportError:
     HAS_PANDAS = False
@@ -165,84 +163,150 @@ class OCRAgentV2:
                     """
                     UPDATE documents SET status = 'failed' WHERE id = $1
                     """,
-                    task["id"],
+                    task["document_id"],
                 )
 
     async def extract_content(self, doc: Dict) -> List[Dict]:
         file_type = doc['file_type'].lower()
-    
+        
         # Fix: Parse metadata if it's a string
-        import json
         metadata = doc.get('metadata', {})
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
             except:
                 metadata = {}
-    
+
+        # DEBUG: Was ist wirklich in metadata?
+        logger.info(f"=== METADATA DEBUG ===")
+        logger.info(f"Raw metadata type: {type(doc.get('metadata'))}")
+        logger.info(f"Raw metadata: {doc.get('metadata')}")
+        logger.info(f"Parsed metadata keys: {list(metadata.keys())}")
+        if 'file_content' in metadata:
+            logger.info(f"file_content length: {len(str(metadata['file_content']))}")
+            logger.info(f"file_content preview: {str(metadata['file_content'])[:100]}")
+        logger.info(f"=== END DEBUG ===")
+
         file_path = metadata.get('file_path')
         file_content = metadata.get('file_content')
-    
+        
+        # Try multiple ways to get file content
+        file_bytes = None
+        
+        # Method 1: Base64 content from metadata
+        file_content = metadata.get('file_content')
         if file_content:
-            file_bytes = base64.b64decode(file_content)
-        elif file_path and os.path.exists(file_path):
-            with open(file_path, 'rb') as f:
-                file_bytes = f.read()
-        else:
-            raise ValueError("No file content available")
+            try:
+                if file_content.startswith('data:'):
+                    # Handle data URL format
+                    file_content = file_content.split(',')[1]
+                file_bytes = base64.b64decode(file_content)
+                logger.info(f"Successfully decoded file_content ({len(file_bytes)} bytes)")
+            except Exception as e:
+                logger.error(f"Failed to decode file_content: {e}")
+        
+        # Method 2: File path
+        if not file_bytes:
+            file_path = metadata.get('file_path')
+            if file_path and os.path.exists(file_path):
+                try:
+                    with open(file_path, 'rb') as f:
+                        file_bytes = f.read()
+                    logger.info(f"Successfully read from file_path: {file_path}")
+                except Exception as e:
+                    logger.error(f"Failed to read file_path {file_path}: {e}")
+        
+        # Method 3: Try to create text content for simple cases
+        if not file_bytes and file_type == 'txt':
+            # For text files, try to create content from document name as fallback
+            text_content = f"Document: {doc['original_name']}\nUploaded via N8N\nNo content available"
+            file_bytes = text_content.encode('utf-8')
+            logger.warning(f"Created fallback text content for {doc['original_name']}")
+        
+        # Final check
+        if not file_bytes:
+            error_msg = f"No file content available for {doc['original_name']}. Metadata: {metadata}"
+            logger.error(error_msg)
+            # Return a single chunk with error info instead of crashing
+            return [{
+                'content': f"[ERROR] Could not extract content from {doc['original_name']}",
+                'type': 'error',
+                'metadata': {'error': 'file_content_unavailable'}
+            }]
 
-        if file_type == "pdf":
-            return await self.extract_pdf(file_bytes)
-        elif file_type in ["png", "jpg", "jpeg", "tiff", "tif"]:
-            return await self.extract_image(file_bytes)
-        elif file_type in ["txt", "md", "log"]:
-            return self.extract_text(file_bytes.decode("utf-8", errors="ignore"))
-        elif file_type in ["docx", "doc"]:
-            if HAS_DOCX:
-                return await self.extract_docx(file_bytes)
-            else:
+        # Extract based on file type
+        try:
+            if file_type == "pdf":
+                return await self.extract_pdf(file_bytes)
+            elif file_type in ["png", "jpg", "jpeg", "tiff", "tif"]:
+                return await self.extract_image(file_bytes)
+            elif file_type in ["txt", "md", "log"]:
                 return self.extract_text(file_bytes.decode("utf-8", errors="ignore"))
-        elif file_type in ["xlsx", "xls", "csv"]:
-            if HAS_PANDAS:
-                return await self.extract_spreadsheet(file_bytes, file_type)
+            elif file_type in ["docx", "doc"]:
+                if HAS_DOCX:
+                    return await self.extract_docx(file_bytes)
+                else:
+                    return self.extract_text(file_bytes.decode("utf-8", errors="ignore"))
+            elif file_type in ["xlsx", "xls", "csv"]:
+                if HAS_PANDAS:
+                    return await self.extract_spreadsheet(file_bytes, file_type)
+                else:
+                    return [{"content": f"[Spreadsheet file: {doc['original_name']}]", "type": "metadata"}]
+            elif file_type == "eml":
+                return await self.extract_email(file_bytes)
+            elif file_type == "html":
+                return self.extract_html(file_bytes.decode("utf-8", errors="ignore"))
+            elif file_type == "zip":
+                return await self.extract_archive(file_bytes)
             else:
-                return [{"content": "[Spreadsheet file]", "type": "metadata"}]
-        elif file_type == "eml":
-            return await self.extract_email(file_bytes)
-        elif file_type == "html":
-            return self.extract_html(file_bytes.decode("utf-8", errors="ignore"))
-        elif file_type == "zip":
-            return await self.extract_archive(file_bytes)
-        else:
-            return self.extract_text(file_bytes.decode("utf-8", errors="ignore"))
+                # Fallback to text extraction
+                return self.extract_text(file_bytes.decode("utf-8", errors="ignore"))
+        except Exception as e:
+            logger.error(f"Failed to extract content from {doc['original_name']}: {e}")
+            return [{
+                'content': f"[ERROR] Extraction failed: {str(e)}",
+                'type': 'error',
+                'metadata': {'error': str(e)}
+            }]
 
     async def extract_pdf(self, pdf_bytes: bytes) -> List[Dict]:
         chunks = []
-        images = pdf2image.convert_from_bytes(pdf_bytes, dpi=300)
-        for page_num, image in enumerate(images, 1):
+        try:
+            images = pdf2image.convert_from_bytes(pdf_bytes, dpi=300)
+            for page_num, image in enumerate(images, 1):
+                text = pytesseract.image_to_string(
+                    image, lang=os.getenv("TESSERACT_LANG", "deu+eng")
+                )
+                if text.strip():
+                    page_chunks = self.split_text(text)
+                    for chunk in page_chunks:
+                        chunks.append(
+                            {
+                                "content": chunk,
+                                "type": "text",
+                                "page": page_num,
+                                "position": None,
+                            }
+                        )
+        except Exception as e:
+            logger.error(f"PDF extraction failed: {e}")
+            chunks.append({
+                "content": f"[PDF extraction failed: {str(e)}]",
+                "type": "error"
+            })
+        return chunks or [{"content": "[Empty PDF]", "type": "text"}]
+
+    async def extract_image(self, image_bytes: bytes) -> List[Dict]:
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
             text = pytesseract.image_to_string(
                 image, lang=os.getenv("TESSERACT_LANG", "deu+eng")
             )
-            if text.strip():
-                page_chunks = self.split_text(text)
-                for chunk in page_chunks:
-                    chunks.append(
-                        {
-                            "content": chunk,
-                            "type": "text",
-                            "page": page_num,
-                            "position": None,
-                        }
-                    )
-        return chunks
-
-    async def extract_image(self, image_bytes: bytes) -> List[Dict]:
-        image = Image.open(io.BytesIO(image_bytes))
-        text = pytesseract.image_to_string(
-            image, lang=os.getenv("TESSERACT_LANG", "deu+eng")
-        )
-        chunks = self.split_text(text) if text.strip() else ["[Bild ohne erkannten Text]"]
-        return [{"content": chunk, "type": "text", "page": 1} for chunk in chunks]
+            chunks = self.split_text(text) if text.strip() else ["[Bild ohne erkannten Text]"]
+            return [{"content": chunk, "type": "text", "page": 1} for chunk in chunks]
+        except Exception as e:
+            logger.error(f"Image extraction failed: {e}")
+            return [{"content": f"[Image extraction failed: {str(e)}]", "type": "error"}]
 
     async def extract_docx(self, docx_bytes: bytes) -> List[Dict]:
         if not HAS_DOCX:
@@ -250,24 +314,31 @@ class OCRAgentV2:
                 {"content": "[DOCX file - python-docx not installed]", "type": "text"}
             ]
         chunks = []
-        doc = DocxDocument(io.BytesIO(docx_bytes))
-        full_text = "\n".join([para.text for para in doc.paragraphs])
-        text_chunks = self.split_text(full_text)
-        for chunk in text_chunks:
-            chunks.append({"content": chunk, "type": "text"})
-        for table_idx, table in enumerate(doc.tables):
-            table_data = []
-            for row in table.rows:
-                table_data.append([cell.text for cell in row.cells])
-            if table_data:
-                chunks.append(
-                    {
-                        "content": json.dumps(table_data),
-                        "type": "table",
-                        "metadata": {"table_index": table_idx},
-                    }
-                )
-        return chunks
+        try:
+            doc = DocxDocument(io.BytesIO(docx_bytes))
+            full_text = "\n".join([para.text for para in doc.paragraphs])
+            text_chunks = self.split_text(full_text)
+            for chunk in text_chunks:
+                chunks.append({"content": chunk, "type": "text"})
+            for table_idx, table in enumerate(doc.tables):
+                table_data = []
+                for row in table.rows:
+                    table_data.append([cell.text for cell in row.cells])
+                if table_data:
+                    chunks.append(
+                        {
+                            "content": json.dumps(table_data),
+                            "type": "table",
+                            "metadata": {"table_index": table_idx},
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"DOCX extraction failed: {e}")
+            chunks.append({
+                "content": f"[DOCX extraction failed: {str(e)}]",
+                "type": "error"
+            })
+        return chunks or [{"content": "[Empty DOCX]", "type": "text"}]
 
     async def extract_spreadsheet(self, file_bytes: bytes, file_type: str) -> List[Dict]:
         if not HAS_PANDAS:
@@ -275,16 +346,23 @@ class OCRAgentV2:
                 {"content": "[Spreadsheet file - pandas not installed]", "type": "text"}
             ]
         chunks = []
-        if file_type == "csv":
-            df = pd.read_csv(io.BytesIO(file_bytes))
-        else:
-            df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
-        if isinstance(df, dict):  # Multiple sheets
-            for sheet_name, sheet_df in df.items():
-                chunks.extend(self._process_dataframe(sheet_df, {"sheet": sheet_name}))
-        else:
-            chunks.extend(self._process_dataframe(df))
-        return chunks
+        try:
+            if file_type == "csv":
+                df = pd.read_csv(io.BytesIO(file_bytes))
+            else:
+                df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=None)
+            if isinstance(df, dict):  # Multiple sheets
+                for sheet_name, sheet_df in df.items():
+                    chunks.extend(self._process_dataframe(sheet_df, {"sheet": sheet_name}))
+            else:
+                chunks.extend(self._process_dataframe(df))
+        except Exception as e:
+            logger.error(f"Spreadsheet extraction failed: {e}")
+            chunks.append({
+                "content": f"[Spreadsheet extraction failed: {str(e)}]",
+                "type": "error"
+            })
+        return chunks or [{"content": "[Empty Spreadsheet]", "type": "text"}]
 
     def _process_dataframe(self, df: pd.DataFrame, metadata: dict = None) -> List[Dict]:
         chunks = []
@@ -301,27 +379,34 @@ class OCRAgentV2:
 
     async def extract_email(self, eml_bytes: bytes) -> List[Dict]:
         chunks = []
-        msg = BytesParser(policy=policy.default).parsebytes(eml_bytes)
-        chunks.append(
-            {
-                "content": json.dumps(
-                    {
-                        "from": msg["From"],
-                        "to": msg["To"],
-                        "subject": msg["Subject"],
-                        "date": msg["Date"],
-                    }
-                ),
-                "type": "metadata",
-            }
-        )
-        body = msg.get_body(preferencelist=("plain", "html"))
-        if body:
-            content = body.get_content()
-            chunks.extend(
-                [{"content": chunk, "type": "text"} for chunk in self.split_text(content)]
+        try:
+            msg = BytesParser(policy=policy.default).parsebytes(eml_bytes)
+            chunks.append(
+                {
+                    "content": json.dumps(
+                        {
+                            "from": msg["From"],
+                            "to": msg["To"],
+                            "subject": msg["Subject"],
+                            "date": msg["Date"],
+                        }
+                    ),
+                    "type": "metadata",
+                }
             )
-        return chunks
+            body = msg.get_body(preferencelist=("plain", "html"))
+            if body:
+                content = body.get_content()
+                chunks.extend(
+                    [{"content": chunk, "type": "text"} for chunk in self.split_text(content)]
+                )
+        except Exception as e:
+            logger.error(f"Email extraction failed: {e}")
+            chunks.append({
+                "content": f"[Email extraction failed: {str(e)}]",
+                "type": "error"
+            })
+        return chunks or [{"content": "[Empty Email]", "type": "text"}]
 
     def extract_text(self, text: str) -> List[Dict]:
         chunks = self.split_text(text)
@@ -330,31 +415,39 @@ class OCRAgentV2:
     def extract_html(self, html: str) -> List[Dict]:
         try:
             from bs4 import BeautifulSoup
-
             soup = BeautifulSoup(html, "html.parser")
             text = soup.get_text(separator="\n", strip=True)
             return self.extract_text(text)
         except ImportError:
             import re
-
             text = re.sub("<[^<]+?>", "", html)
             return self.extract_text(text)
 
     async def extract_archive(self, zip_bytes: bytes) -> List[Dict]:
         chunks = []
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-            for name in zf.namelist():
-                if not name.endswith("/"):
-                    chunks.append(
-                        {
-                            "content": f"Archive contains: {name}",
-                            "type": "metadata",
-                            "metadata": {"archived_file": name},
-                        }
-                    )
-        return chunks
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                for name in zf.namelist():
+                    if not name.endswith("/"):
+                        chunks.append(
+                            {
+                                "content": f"Archive contains: {name}",
+                                "type": "metadata",
+                                "metadata": {"archived_file": name},
+                            }
+                        )
+        except Exception as e:
+            logger.error(f"Archive extraction failed: {e}")
+            chunks.append({
+                "content": f"[Archive extraction failed: {str(e)}]",
+                "type": "error"
+            })
+        return chunks or [{"content": "[Empty Archive]", "type": "text"}]
 
     def split_text(self, text: str) -> List[str]:
+        if not text or not text.strip():
+            return ["[Empty content]"]
+        
         words = text.split()
         chunks = []
         current_chunk = []
@@ -368,7 +461,7 @@ class OCRAgentV2:
                 current_size = 0
         if current_chunk:
             chunks.append(" ".join(current_chunk))
-        return chunks or [""]
+        return chunks or ["[No content]"]
 
     async def run(self):
         await self.connect()
@@ -380,15 +473,16 @@ class OCRAgentV2:
         finally:
             await self.close()
 
-
 def main():
     db_url = os.getenv(
         "DATABASE_URL",
-        "postgresql://docintell:docintell123@postgres:5432/document_intelligence",
+        "postgresql://docintel:docintel123@postgres:5432/docintel",
     )
+    print(f"🔍 DEBUG: Using DATABASE_URL: {db_url}")
+    print(f"🔍 DEBUG: Environment DATABASE_URL: {os.getenv('DATABASE_URL', 'NOT SET')}")
+    
     agent = OCRAgentV2(db_url)
     asyncio.run(agent.run())
-
 
 if __name__ == "__main__":
     main()
