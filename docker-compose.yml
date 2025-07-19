@@ -1,22 +1,23 @@
 version: '3.8'
 
 services:
+  # === DATABASE LAYER ===
   postgres:
     image: postgres:16-alpine
-    container_name: doc-intel-postgres
+    container_name: semantic-doc-finder-postgres
     environment:
-      POSTGRES_USER: docintel
-      POSTGRES_PASSWORD: docintel123
-      POSTGRES_DB: docintel
+      POSTGRES_USER: ${POSTGRES_USER:-semanticuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-semantic2024}
+      POSTGRES_DB: ${POSTGRES_DB:-semantic_doc_finder}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_PATH:-./postgresql_data}:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      - doc_network
+      - semantic_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U docintel -d docintel"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-semanticuser} -d ${POSTGRES_DB:-semantic_doc_finder}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -24,41 +25,52 @@ services:
 
   qdrant:
     image: qdrant/qdrant
-    container_name: doc-intel-qdrant
+    container_name: semantic-doc-finder-qdrant
     ports:
-      - "6333:6333"
+      - "${QDRANT_PORT:-6333}:6333"
     volumes:
-      - qdrant_data:/qdrant/storage
+      - ${QDRANT_DATA_PATH:-./qdrant_data}:/qdrant/storage
     networks:
-      - doc_network
+      - semantic_network
     environment:
       QDRANT__SERVICE__GRPC_PORT: 6334
     restart: unless-stopped
 
+  # === LLM LAYER ===
   ollama:
     image: ollama/ollama:latest
-    container_name: doc-intel-ollama
+    container_name: semantic-doc-finder-ollama
     ports:
-      - "11434:11434"
+      - "${OLLAMA_PORT:-11434}:11434"
     environment:
       OLLAMA_KEEP_ALIVE: 24h
       OLLAMA_HOST: 0.0.0.0
+      OLLAMA_MAX_LOADED_MODELS: 3
+      OLLAMA_NUM_PARALLEL: 2
     volumes:
-      - ollama_data:/root/.ollama
+      - ${OLLAMA_DATA_PATH:-./ollama_data}:/root/.ollama
     networks:
-      - doc_network
+      - semantic_network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
+  # === PROCESSING LAYER ===
   ocr_agent:
     build:
       context: .
       dockerfile: agents/ocr/Dockerfile.v2
-    container_name: doc-intel-ocr
+    container_name: semantic-doc-finder-ocr
     volumes:
-      - ./data:/data:ro
-      - ./logs:/app/logs
+      - ${DOCUMENTS_PATH:-./data}:/data:ro
+      - ${LOGS_PATH:-./logs}:/app/logs
     environment:
-      DATABASE_URL: postgresql://docintel:docintel123@postgres:5432/docintel
+      DATABASE_URL: postgresql://${POSTGRES_USER:-semanticuser}:${POSTGRES_PASSWORD:-semantic2024}@postgres:5432/${POSTGRES_DB:-semantic_doc_finder}
       TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
       CHUNK_SIZE: ${CHUNK_SIZE:-1000}
       PYTHONUNBUFFERED: 1
@@ -66,18 +78,18 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - doc_network
+      - semantic_network
     restart: unless-stopped
 
   search_api:
     build:
       context: .
       dockerfile: services/search/Dockerfile.v2
-    container_name: doc-intel-search-api
+    container_name: semantic-doc-finder-search-api
     ports:
-      - "8001:8001"
+      - "${SEARCH_API_PORT:-8001}:8001"
     environment:
-      DATABASE_URL: postgresql://docintel:docintel123@postgres:5432/docintel
+      DATABASE_URL: postgresql://${POSTGRES_USER:-semanticuser}:${POSTGRES_PASSWORD:-semantic2024}@postgres:5432/${POSTGRES_DB:-semantic_doc_finder}
       QDRANT_URL: http://qdrant:6333
       OLLAMA_URL: http://ollama:11434
       DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
@@ -90,69 +102,46 @@ services:
       ollama:
         condition: service_started
     networks:
-      - doc_network
+      - semantic_network
     restart: unless-stopped
 
+  # === WORKFLOW LAYER ===
   n8n:
     image: docker.n8n.io/n8nio/n8n
-    container_name: doc-intel-n8n
+    container_name: semantic-doc-finder-n8n
     ports:
-      - "5678:5678"
+      - "${N8N_PORT:-5678}:5678"
     environment:
       DB_TYPE: postgresdb
       DB_POSTGRESDB_HOST: postgres
       DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: docintel
-      DB_POSTGRESDB_USER: docintel
-      DB_POSTGRESDB_PASSWORD: docintel123
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-semantic_doc_finder}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-semanticuser}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-semantic2024}
       N8N_BASIC_AUTH_ACTIVE: "true"
       N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
-      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-changeme}
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-change-this-key}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-semantic2024}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-semantic-doc-finder-key-2024}
       N8N_HOST: 0.0.0.0
       N8N_PORT: 5678
       N8N_PROTOCOL: http
-      WEBHOOK_URL: http://localhost:5678/
+      WEBHOOK_URL: http://localhost:${N8N_PORT:-5678}/
       GENERIC_TIMEZONE: ${TZ:-Europe/Berlin}
-      N8N_RUNNERS_ENABLED: "true"
-      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "false"
+      OLLAMA_URL: http://ollama:11434
+      DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
     volumes:
-      - n8n_data:/home/node/.n8n
+      - ${N8N_DATA_PATH:-./n8n_data}:/home/node/.n8n
       - ./n8n/workflows:/workflows
-      - ./data:/data
+      - ${DOCUMENTS_PATH:-./data}:/data
     depends_on:
       postgres:
         condition: service_healthy
+      ollama:
+        condition: service_started
     networks:
-      - doc_network
-    restart: unless-stopped
-
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: doc-intel-webui
-    ports:
-      - "8080:8080"
-    environment:
-      OLLAMA_BASE_URL: http://ollama:11434
-      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-change-this-secret}
-      WEBUI_AUTH: ${WEBUI_AUTH:-false}
-      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-true}
-      DEFAULT_MODELS: ${DEFAULT_MODEL:-mistral}
-    volumes:
-      - open_webui_data:/app/backend/data
-    depends_on:
-      - ollama
-    networks:
-      - doc_network
+      - semantic_network
     restart: unless-stopped
 
 networks:
-  doc_network:
+  semantic_network:
     driver: bridge
-
-volumes:
-  postgres_data:
-  qdrant_data:
-  n8n_data:
-  ollama_data:
-  open_webui_data:

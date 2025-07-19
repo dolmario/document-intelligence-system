@@ -179,7 +179,7 @@ class OCRAgentV2:
             await self.close()
 
 def main():
-    db_url = os.getenv("DATABASE_URL", "postgresql://docintel:docintel123@postgres:5432/docintel")
+    db_url = os.getenv("DATABASE_URL", "postgresql://semanticuser:semantic2024@postgres:5432/semanticuser")
     agent = OCRAgentV2(db_url)
     asyncio.run(agent.run())
 

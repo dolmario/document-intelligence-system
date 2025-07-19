@@ -31,7 +31,7 @@ def test_remove_pii(indexer):
 def test_extract_keywords(indexer):
     """Test Keyword-Extraktion"""
     text = """
-    Das Document Intelligence System verarbeitet Dokumente automatisch.
+    Das Semantic Document Finder System verarbeitet Dokumente automatisch.
     Es nutzt OCR für Texterkennung und erstellt durchsuchbare Indizes.
     Die Verarbeitung erfolgt DSGVO-konform.
     """

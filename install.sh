@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "📦 Document Intelligence System V2 - Installation"
+echo "📦 Semantic Document Finder System V2 - Installation"
 echo "=============================================="
 
 # Color codes
@@ -74,7 +74,7 @@ sleep 10
 
 # Wait for PostgreSQL to be healthy
 RETRIES=30
-until docker compose exec -T postgres pg_isready -U docintell -d document_intelligence &>/dev/null; do
+until docker compose exec -T postgres pg_isready -U semanticuserl -d semantic_doc_finder &>/dev/null; do
     RETRIES=$((RETRIES-1))
     if [ $RETRIES -le 0 ]; then
         echo -e "${RED}❌ PostgreSQL failed to start!${NC}"
@@ -100,7 +100,7 @@ SERVICES=("postgres" "qdrant" "ocr_agent" "search_api" "n8n" "ollama" "open-webu
 ALL_OK=true
 
 for service in "${SERVICES[@]}"; do
-    if docker compose ps | grep -q "doc-intel-$service.*Up\|doc-intel-$service.*running"; then
+    if docker compose ps | grep -q "semantic-doc-finder-$service.*Up\|semantic-doc-finder-$service.*running"; then
         echo -e "${GREEN}✅ $service is running${NC}"
     else
         echo -e "${RED}❌ $service is not running${NC}"
@@ -110,7 +110,7 @@ done
 
 # Load default model
 echo -e "\n${YELLOW}Loading default LLM model (mistral)...${NC}"
-docker exec doc-intel-ollama ollama pull mistral 2>/dev/null || echo -e "${YELLOW}⚠️  Model loading failed - you can do this later${NC}"
+docker exec semantic-doc-finder-ollama ollama pull mistral 2>/dev/null || echo -e "${YELLOW}⚠️  Model loading failed - you can do this later${NC}"
 
 # Final status
 if [ "$ALL_OK" = true ]; then
@@ -131,8 +131,8 @@ echo "   2. Import workflows: n8n/workflows/document_processing_v2.json"
 echo "   3. Test with: curl -X POST http://localhost:8001/upload -H 'Content-Type: application/json' -d '{\"name\":\"test.txt\",\"content\":\"Hello World\"}'"
 
 echo -e "\n${GREEN}🤖 To add more models:${NC}"
-echo "   docker exec doc-intel-ollama ollama pull llama2"
-echo "   docker exec doc-intel-ollama ollama pull codellama"
+echo "   docker exec semantic-doc-finder-ollama ollama pull llama2"
+echo "   docker exec semantic-doc-finder-ollama ollama pull codellama"
 
 echo -e "\n${GREEN}📚 View logs:${NC}"
 echo "   docker compose logs -f"

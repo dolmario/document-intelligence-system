@@ -1,0 +1,291 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "dbbd9aa4-95d3-463a-932f-9c4ede0181eb",
+      "name": "Enhancement Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -1936,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  pq.id as queue_id,\n  pq.document_id,\n  d.original_name,\n  d.metadata->>'file_path' as file_path,\n  d.file_type\nFROM processing_queue pq\nJOIN documents d ON pq.document_id = d.id\nWHERE pq.status = 'pending' \n  AND pq.task_type = 'extract'\nORDER BY pq.priority DESC, pq.created_at ASC\nLIMIT 5;\n\n",
+        "options": {}
+      },
+      "id": "55250b95-5bee-445f-b06e-862fe6e5e77f",
+      "name": "Get Pending Tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -1712,
+        256
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [],
+          "dateTime": [],
+          "number": [],
+          "string": [
+            {
+              "value1": "={{ $json.queue_id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "2ad02064-10e6-4770-aec4-77102536ff78",
+      "name": "Has Tasks?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1488,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE processing_queue \nSET status = 'processing',\n    started_at = NOW(),\n    attempts = attempts + 1\nWHERE id = {{ $json.queue_id }}\nRETURNING id, document_id, attempts;",
+        "options": {}
+      },
+      "id": "35926b83-1a9a-4fd6-92c8-01d9db4b9421",
+      "name": "Mark as Processing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Simple OCR Processing Simulation\nconst task = $input.first().json;\nconst document = $('Get Pending Tasks').item.json;\n\nconsole.log(`Processing: ${document.original_name}`);\n\n// Simulate text extraction\nlet extractedText = `Extracted content from ${document.original_name}\\n\\nThis is simulated OCR text content.\\nMultiple lines and paragraphs would be here.\\nStructured data extraction results.`;\n\n// Create simple chunks\nconst chunkSize = 500;\nconst chunks = [];\nfor (let i = 0; i < extractedText.length; i += chunkSize) {\n  chunks.push({\n    content: extractedText.substring(i, i + chunkSize),\n    chunk_index: chunks.length,\n    page_number: Math.floor(chunks.length / 2) + 1\n  });\n}\n\nconst result = {\n  queue_id: task.id,\n  document_id: document.document_id,\n  chunks: chunks,\n  total_chunks: chunks.length\n};\n\nconsole.log(`Created ${chunks.length} chunks for document ${document.document_id}`);\n\nreturn [result];"
+      },
+      "id": "13ff506b-3997-459d-a23b-48165a0ad2dd",
+      "name": "Process OCR",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -1056,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Save chunks to database\nconst result = $input.first().json;\nconst chunks = result.chunks;\n\n// Prepare chunk insertion data\nconst chunkInserts = chunks.map(chunk => ({\n  document_id: result.document_id,\n  content: chunk.content,\n  chunk_index: chunk.chunk_index,\n  page_number: chunk.page_number,\n  status: 'processed'\n}));\n\nreturn chunkInserts;"
+      },
+      "id": "b46cc648-c6cd-4ecc-821c-d8f03b7dee38",
+      "name": "Prepare Chunks",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -832,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO chunks (document_id, content, chunk_index, page_number, status, created_at)\nVALUES ({{ $json.document_id }}, '{{ $json.content }}', {{ $json.chunk_index }}, {{ $json.page_number }}, '{{ $json.status }}', NOW())\nRETURNING id;",
+        "options": {}
+      },
+      "id": "474b3866-65e9-4003-8ffc-ba16c859f8cd",
+      "name": "Save Chunks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -608,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE processing_queue \nSET status = 'completed',\n    completed_at = NOW()\nWHERE id = {{ $('Process OCR').item.json.queue_id }}\nRETURNING id, status;",
+        "options": {}
+      },
+      "id": "1ad4fa5e-10ea-40d2-b535-b80ff9bc90af",
+      "name": "Complete Task",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        144
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Log successful processing\nconst result = $('Process OCR').item.json;\n\nconsole.log('=== OCR PROCESSING COMPLETED ===');\nconsole.log('Document ID:', result.document_id);\nconsole.log('Queue ID:', result.queue_id);\nconsole.log('Chunks Created:', result.total_chunks);\nconsole.log('==============================');\n\nreturn [{success: true, message: 'Processing completed'}];"
+      },
+      "id": "d1e67bcc-88cd-43ec-ba4e-24efbca698da",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -176,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// No tasks found\nconsole.log('=== NO PENDING TASKS ===');\nconsole.log('Time:', new Date().toISOString());\nconsole.log('======================');\n\nreturn [{message: 'No pending tasks found'}];"
+      },
+      "id": "7780a143-99dd-4046-b69c-d6d4d533c2e8",
+      "name": "No Tasks",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -1280,
+        352
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Enhancement Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Tasks": {
+      "main": [
+        [
+          {
+            "node": "Has Tasks?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Tasks?": {
+      "main": [
+        [
+          {
+            "node": "Mark as Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Tasks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Processing": {
+      "main": [
+        [
+          {
+            "node": "Process OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process OCR": {
+      "main": [
+        [
+          {
+            "node": "Prepare Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Chunks": {
+      "main": [
+        [
+          {
+            "node": "Save Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Chunks": {
+      "main": [
+        [
+          {
+            "node": "Complete Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Task": {
+      "main": [
+        [
+          {
+            "node": "Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1f9874f4-c3c9-4278-9451-7ad4976bcc1a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ea5d82e8e516069c37d2848a89101cd5249268f1ee9ad27e6599d64c520de1dd"
+  },
+  "id": "WeWJJZcUdlOsdNdK",
+  "tags": [
+    {
+      "name": "semantic-doc-finder",
+      "id": "4eFDUzvaGfSTVbz0",
+      "createdAt": "2025-07-19T07:28:56.241Z",
+      "updatedAt": "2025-07-19T07:28:56.241Z"
+    }
+  ]
+}

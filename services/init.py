@@ -1,1 +1,1 @@
-"""Services for Document Intelligence System"""
+"""Services for Semantic Document Finder System"""

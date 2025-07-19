@@ -18,7 +18,7 @@ from qdrant_client.models import Distance, VectorParams, PointStruct
 logger = logging.getLogger('search_api')
 
 app = FastAPI(
-    title="Document Intelligence Search API V2",
+    title="Semantic Document Finder Search API V2",
     version="2.0.0",
     description="Semantic document search with learning"
 )
@@ -133,7 +133,7 @@ async def shutdown_event():
 @app.get("/")
 async def root():
     return {
-        "service": "Document Intelligence Search API V2",
+        "service": "Semantic Document Finder Search API V2",
         "status": "running",
         "endpoints": {
             "/search": "Semantic search",

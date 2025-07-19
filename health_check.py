@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Health Check for Document Intelligence System V2
+Health Check for Semantic Document Finder System V2
 """
 
 import requests
@@ -69,7 +69,7 @@ def test_search():
         return False
 
 def main():
-    print("🏥 Document Intelligence System V2 - Health Check")
+    print("🏥 Semantic Document Finder System V2 - Health Check")
     print("=" * 50)
     
     # Check services

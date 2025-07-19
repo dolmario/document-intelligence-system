@@ -66,7 +66,7 @@ def test_docker_compose_config():
         assert service in config['services'], f"Service {service} fehlt in docker-compose.yml"
     
     # Verifiziere Netzwerk
-    assert 'doc_network' in config['networks']
+    assert 'semantic_network' in config['networks']
     
     # Verifiziere Volumes
     assert 'redis_data' in config['volumes']

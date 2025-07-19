@@ -1,135 +1,62 @@
 @echo off
-setlocal EnableDelayedExpansion
+REM semantic-doc-finder Installation Script (Windows)
 
-echo ============================================
-echo Document Intelligence System V2 - Installation
-echo ============================================
+echo.
+echo 🚀 semantic-doc-finder Installation
+echo ==========================================
 
-REM Check Docker
+REM Check Requirements
+echo 📋 Prüfe Voraussetzungen...
+
 docker --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ERROR: Docker not found! Please install Docker Desktop.
-    echo Visit: https://docs.docker.com/desktop/install/windows-install/
+if errorlevel 1 (
+    echo ❌ Docker nicht gefunden!
+    echo Bitte installiere Docker Desktop: https://www.docker.com/products/docker-desktop
     pause
     exit /b 1
 )
+echo ✅ Docker gefunden
 
-REM Check if Docker is running
-docker info >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ERROR: Docker is not running! Please start Docker Desktop.
+docker-compose --version >nul 2>&1
+if errorlevel 1 (
+    echo ❌ Docker Compose nicht gefunden!
+    echo Docker Compose ist normalerweise in Docker Desktop enthalten.
     pause
     exit /b 1
 )
+echo ✅ Docker Compose gefunden
 
-echo [OK] Prerequisites checked
+REM Setup
+echo.
+echo 🔧 Setup semantic-doc-finder...
 
-REM Create directories
-echo Creating directories...
-mkdir data 2>nul
-mkdir logs 2>nul
-mkdir n8n\workflows 2>nul
-type nul > data\.gitkeep 2>nul
-type nul > logs\.gitkeep 2>nul
-
-REM Setup environment
-echo Setting up environment...
-if not exist .env (
-    if exist .env.example (
-        copy .env.example .env >nul
-        echo [OK] Created .env from template
-        echo [!] Please edit .env to set secure passwords!
-    ) else (
-        echo ERROR: .env.example not found!
-        pause
-        exit /b 1
-    )
-) else (
-    echo [OK] .env already exists
-)
-
-REM Stop existing containers
-echo Cleaning up old containers...
-docker compose down 2>nul
-
-REM Build containers
-echo Building containers (this may take 5-10 minutes)...
-docker compose build --no-cache
-if %errorlevel% neq 0 (
-    echo ERROR: Build failed!
-    pause
-    exit /b 1
-)
-
-REM Start PostgreSQL first
-echo Starting PostgreSQL...
-docker compose up -d postgres
-timeout /t 10 /nobreak >nul
-
-REM Wait for PostgreSQL
-echo Waiting for PostgreSQL...
-set RETRIES=30
-:pgwait
-docker compose exec -T postgres pg_isready -U docintell -d document_intelligence >nul 2>&1
-if %errorlevel% equ 0 goto pgready
-set /a RETRIES-=1
-if %RETRIES% leq 0 (
-    echo ERROR: PostgreSQL failed to start!
-    docker compose logs postgres
-    pause
-    exit /b 1
-)
-timeout /t 2 /nobreak >nul
-goto pgwait
-
-:pgready
-echo [OK] PostgreSQL ready
-
-REM Start all services
-echo Starting all services...
-docker compose up -d
-if %errorlevel% neq 0 (
-    echo ERROR: Failed to start services!
-    pause
-    exit /b 1
-)
-
-REM Wait for services
-echo Waiting for services to be ready...
-timeout /t 20 /nobreak >nul
-
-REM Check services
-echo Checking service status...
-docker compose ps
-
-REM Load default model
-echo Loading default LLM model (mistral)...
-docker exec doc-intel-ollama ollama pull mistral 2>nul || echo [!] Model loading failed - you can do this later
+REM Run migration
+call migration.bat
 
 echo.
-echo ============================================
-echo Installation complete!
-echo ============================================
+echo 📚 Installation abgeschlossen!
+echo ==========================================
 echo.
-echo Access Points:
-echo   - N8N Workflows:  http://localhost:5678 (admin/changeme)
-echo   - Search API:     http://localhost:8001
-echo   - Open WebUI:     http://localhost:8080
-echo   - Qdrant UI:      http://localhost:6333/dashboard
+echo 🎯 Nächste Schritte:
 echo.
-echo Next Steps:
-echo   1. Change default passwords in .env
-echo   2. Import workflows from n8n\workflows\
-echo   3. Add documents via API or N8N
+echo 1. N8N konfigurieren:
+echo    - Öffne: http://localhost:5678
+echo    - Login: admin / semantic2024
+echo    - Importiere Workflows aus /n8n/workflows/
 echo.
-echo To add more models:
-echo   docker exec doc-intel-ollama ollama pull llama2
+echo 2. Upload testen:
+echo    - Führe aus: test_upload.bat
 echo.
-echo To view logs:
-echo   docker compose logs -f
+echo 3. Erste Dokumente verarbeiten:
+echo    - Kopiere PDFs nach ./data/
+echo    - Oder nutze N8N Upload: http://localhost:5678/webhook-test/doc-upload
 echo.
-echo To stop:
-echo   docker compose down
+echo 4. Search API testen:
+echo    - http://localhost:8001/health
+echo    - http://localhost:8001/docs
+echo.
+echo 💡 Hilfe und Dokumentation:
+echo    - README.md
+echo    - Docker Logs: docker-compose logs -f
 echo.
 pause
-

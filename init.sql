@@ -1,4 +1,4 @@
--- Document Intelligence System - PostgreSQL Schema
+-- Semantic Document Finder System - PostgreSQL Schema
 -- Safe initialization with fallbacks
 
 -- Create extensions
