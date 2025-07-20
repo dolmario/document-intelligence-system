@@ -153,14 +153,14 @@ class EnhancedOCRAgent:
         elif file_type in ["png", "jpg", "jpeg", "tiff", "tif"]:
             return await self.extract_image(file_bytes)
         elif file_type in ["txt", "md", "log"]:
-            return self.extract_text(file_bytes.decode("utf-8", errors="ignore"))
+            return self.extract_text(file_bytes.decode("utf-8", errors="ignore"), file_type)
         elif file_type in ["docx", "doc"]:
             if HAS_DOCX:
                 return await self.extract_docx(file_bytes)
             else:
-                return self.extract_text(file_bytes.decode("utf-8", errors="ignore"))
+                return self.extract_text(file_bytes.decode("utf-8", errors="ignore"), file_type)
         else:
-            return self.extract_text(file_bytes.decode("utf-8", errors="ignore"))
+            return self.extract_text(file_bytes.decode("utf-8", errors="ignore"), file_type)
 
     async def _extract_content_streaming(self, file_path: str, file_type: str, filename: str) -> List[Dict]:
         """Streaming extraction for large files"""
@@ -177,14 +177,14 @@ class EnhancedOCRAgent:
                 logger.warning(f"Streaming fallback for {file_type}")
                 with open(file_path, 'rb') as f:
                     file_bytes = f.read()
-                return self.extract_text(file_bytes.decode('utf-8', errors='ignore'))
+                return self.extract_text(file_bytes.decode('utf-8', errors='ignore'), file_type)
                 
         except Exception as e:
             logger.error(f"Streaming failed: {e}")
             # Ultimate fallback
             with open(file_path, 'rb') as f:
                 file_bytes = f.read()
-            return self.extract_text(file_bytes.decode('utf-8', errors='ignore'))
+            return self.extract_text(file_bytes.decode('utf-8', errors='ignore'), file_type)
 
     async def _stream_large_pdf(self, file_path: str) -> List[Dict]:
         """Verarbeite PDF seitenweise mit dynamischer DPI"""
@@ -218,7 +218,9 @@ class EnhancedOCRAgent:
                 )
                 
                 if text.strip():
-                    page_chunks = self.split_text(text)
+                    # Größere Chunks für große PDFs (bessere Kohärenz)
+                    pdf_chunk_size = self.chunk_size * 1.5 if file_size > 100 else self.chunk_size
+                    page_chunks = self.split_text(text, int(pdf_chunk_size))
                     for chunk_idx, chunk in enumerate(page_chunks):
                         chunks.append({
                             "content": chunk,
@@ -227,7 +229,8 @@ class EnhancedOCRAgent:
                             "metadata": {
                                 "extraction_method": "pdf_streaming",
                                 "dpi": dpi,
-                                "page_chunk": chunk_idx
+                                "page_chunk": chunk_idx,
+                                "chunk_size_used": int(pdf_chunk_size)
                             }
                         })
                 
@@ -326,7 +329,8 @@ class EnhancedOCRAgent:
                             'type': 'text',
                             'page': page_num,
                             'metadata': {
-                                'extraction_method': 'pdf_in_memory'
+                                'extraction_method': 'pdf_in_memory',
+                                'chunk_size_used': self.chunk_size
                             }
                         })
         except Exception as e:
@@ -346,7 +350,7 @@ class EnhancedOCRAgent:
             )
             
             chunks = self.split_text(text) if text.strip() else ["[Bild ohne erkannten Text]"]
-            return [{'content': chunk, 'type': 'text', 'page': 1} for chunk in chunks]
+            return [{'content': chunk, 'type': 'text', 'page': 1, 'metadata': {'extraction_method': 'image_ocr'}} for chunk in chunks]
         except Exception as e:
             logger.error(f"Image extraction failed: {e}")
             return [{"content": f"[Image extraction failed: {e}]", "type": "error"}]
@@ -361,7 +365,8 @@ class EnhancedOCRAgent:
             doc = DocxDocument(io.BytesIO(docx_bytes))
             
             full_text = '\n'.join([para.text for para in doc.paragraphs])
-            text_chunks = self.split_text(full_text)
+            # Larger chunks for document text (better coherence)
+            text_chunks = self.split_text(full_text, int(self.chunk_size * 1.3))
             
             for chunk in text_chunks:
                 chunks.append({'content': chunk, 'type': 'text'})
@@ -384,13 +389,24 @@ class EnhancedOCRAgent:
             logger.error(f"DOCX extraction failed: {e}")
             return [{"content": f"[DOCX extraction failed: {e}]", "type": "error"}]
 
-    def extract_text(self, text: str) -> List[Dict]:
-        """Extract plain text"""
-        chunks = self.split_text(text)
-        return [{"content": chunk, "type": "text"} for chunk in chunks]
+    def extract_text(self, text: str, file_type: str = 'txt') -> List[Dict]:
+        """Extract plain text with adaptive chunking"""
+        # Adaptive chunk sizes based on file type
+        if file_type in ['csv', 'tsv']:
+            # Smaller chunks for structured data
+            chunk_size = self.chunk_size // 2
+        elif file_type in ['md', 'txt']:
+            # Larger chunks for narrative text
+            chunk_size = self.chunk_size * 1.2
+        else:
+            chunk_size = self.chunk_size
+            
+        chunks = self.split_text(text, int(chunk_size))
+        return [{"content": chunk, "type": "text", "metadata": {"chunk_size_used": int(chunk_size)}} for chunk in chunks]
 
-    def split_text(self, text: str) -> List[str]:
-        """Split text into chunks"""
+    def split_text(self, text: str, chunk_size: int = None) -> List[str]:
+        """Teile Text in Chunks mit dynamischer Größe"""
+        chunk_size = chunk_size or self.chunk_size
         words = text.split()
         chunks = []
         current_chunk = []
@@ -400,7 +416,7 @@ class EnhancedOCRAgent:
             current_chunk.append(word)
             current_size += len(word) + 1
             
-            if current_size >= self.chunk_size:
+            if current_size >= chunk_size:
                 chunks.append(" ".join(current_chunk))
                 current_chunk = []
                 current_size = 0
