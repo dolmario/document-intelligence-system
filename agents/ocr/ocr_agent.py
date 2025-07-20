@@ -72,11 +72,15 @@ class DocumentMetadata(BaseModel):
     
     # File metadata
     original_filename: Optional[str] = None
-    file_size_mb: Optional[float] = None
+    file_size_mb: Optional[Union[float, str]] = None
     
     # N8N compatibility fields (camelCase)
     fileContent: Optional[str] = None
     filePath: Optional[str] = None
+    
+    # Additional N8N fields
+    fileName: Optional[str] = None
+    fileType: Optional[str] = None
     
     # Additional metadata
     uploadedAt: Optional[str] = None
@@ -84,6 +88,19 @@ class DocumentMetadata(BaseModel):
     
     class Config:
         extra = "allow"  # Allow additional fields
+    
+    @validator('file_size_mb', pre=True)
+    def convert_file_size(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return None
+        return None
     
     def get_file_content(self) -> Optional[str]:
         """Get file content with fallback"""
@@ -95,6 +112,10 @@ class DocumentMetadata(BaseModel):
         if path and os.path.exists(path) and os.path.isfile(path):
             return path
         return None
+    
+    def get_original_filename(self) -> Optional[str]:
+        """Get filename with fallback"""
+        return self.original_filename or self.fileName
     
     def determine_processing_mode(self) -> str:
         """Auto-determine processing mode based on file size"""
@@ -243,7 +264,25 @@ class OCRAgentOptimized:
         """Hauptmethode für Content-Extraktion"""
         try:
             file_type = doc["file_type"].lower()
+            
+            # Map MIME types to simple extensions
+            file_type_mapping = {
+                "application/pdf": "pdf",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+                "application/msword": "doc",
+                "text/plain": "txt",
+                "text/html": "html",
+                "image/png": "png",
+                "image/jpeg": "jpg",
+            }
+            file_type = file_type_mapping.get(file_type, file_type.split('/')[-1])
+            
             metadata = self._parse_metadata_robust(doc.get("metadata", {}))
+            
+            # Log metadata for debugging
+            logger.debug(f"📋 Parsed metadata: file_content={bool(metadata.get_file_content())}, "
+                         f"file_path={metadata.get_file_path()}, "
+                         f"original_filename={metadata.get_original_filename()}")
             
             # Determine processing mode
             processing_mode = metadata.determine_processing_mode()
@@ -283,15 +322,30 @@ class OCRAgentOptimized:
             else:
                 metadata_dict = {}
             
-            # Create DocumentMetadata
-            return DocumentMetadata(**metadata_dict)
+            # Log what we got
+            logger.debug(f"📋 Metadata keys: {list(metadata_dict.keys())}")
             
+            # Create DocumentMetadata with error handling
+            try:
+                return DocumentMetadata(**metadata_dict)
+            except Exception as e:
+                logger.warning(f"⚠️ DocumentMetadata validation failed: {e}")
+                # Return minimal valid metadata
+                return DocumentMetadata(
+                    file_content=metadata_dict.get('file_content') or metadata_dict.get('fileContent'),
+                    file_path=metadata_dict.get('file_path') or metadata_dict.get('filePath'),
+                    original_filename=metadata_dict.get('original_filename') or metadata_dict.get('fileName'),
+                    source=metadata_dict.get('source', 'unknown')
+                )
+                
         except Exception as e:
-            logger.error(f"❌ Metadata-Parsing fehlgeschlagen: {e}")
+            logger.error(f"❌ Metadata-Parsing komplett fehlgeschlagen: {e}")
             return DocumentMetadata()
 
     async def _get_file_bytes(self, file_content: Optional[str], file_path: Optional[str]) -> Optional[bytes]:
         """Get file bytes from content or path"""
+        logger.debug(f"🔍 Suche Dateidaten - file_content: {bool(file_content)}, file_path: {file_path}")
+        
         # Try base64 content first
         if file_content:
             if self._validate_base64(file_content):
@@ -309,6 +363,7 @@ class OCRAgentOptimized:
             except Exception as e:
                 logger.warning(f"⚠️ Datei-Lesen fehlgeschlagen: {e}")
         
+        logger.error(f"❌ Keine Dateidaten gefunden - content: {file_content[:50] if file_content else 'None'}, path: {file_path}")
         return None
 
     def _validate_base64(self, content: str) -> bool:
