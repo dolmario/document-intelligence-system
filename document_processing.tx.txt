@@ -1,0 +1,171 @@
+{
+  "name": "My workflow 3",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "doc-upload",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Document Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        -448,
+        64
+      ],
+      "typeVersion": 1,
+      "id": "b1af05eb-72e1-4439-8b95-9cfe398c11bb",
+      "webhookId": "doc-upload-test-fixed"
+    },
+    {
+      "parameters": {
+        "functionCode": "const item = $input.first().json;\nlet fileContent = null;\n\nconsole.log('✅ Eingehende Daten:', JSON.stringify(item, null, 2));\n\n// Robust nach fileContent suchen\nif (item.fileContent) {\n  fileContent = item.fileContent;\n} else if (item.body?.fileContent) {\n  fileContent = item.body.fileContent;\n} else if (item.metadata?.file_content) {\n  fileContent = item.metadata.file_content;\n}\n\nif (!fileContent) {\n  throw new Error('❌ Missing required content: either fileContent (base64) or filePath must be provided');\n}\n\n// Output-Check\nconsole.log('📦 fileContent length:', fileContent.length);\n\nreturn [{\n  fileName: item.fileName,\n  fileType: item.fileType,\n  fileContent: fileContent,\n  metadata: {\n    ...item.metadata,\n    file_content: fileContent,\n    source: 'n8n',\n    processed: false,\n    uploadedAt: new Date().toISOString()\n  }\n}];\n\n\n\n\n"
+      },
+      "name": "Process Document Data",
+      "type": "n8n-nodes-base.function",
+      "position": [
+        -240,
+        48
+      ],
+      "typeVersion": 1,
+      "id": "eba2f424-159a-409e-b0b0-48a41cb92495"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        864,
+        128
+      ],
+      "typeVersion": 1,
+      "id": "c7d5be81-79dd-447c-ba0f-6d000dbe48c1",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"name\": \"status\",\n  \"value\": \"success\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        592,
+        112
+      ],
+      "id": "e46d5004-f6db-4886-a9ac-f89b2f9ee38e",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH new_doc AS (\n  INSERT INTO documents (source_id, original_name, file_type, metadata)\n  VALUES (\n    (SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1),\n    $1, $2, $3::jsonb\n  )\n  RETURNING id\n)\nINSERT INTO processing_queue (document_id, task_type, priority)\nSELECT id, 'extract', 8 FROM new_doc\nRETURNING (SELECT id FROM new_doc) as document_id;\n\n\n",
+        "options": {
+          "queryReplacement": "=[\n  \"{{$json.fileName}}\",\n  \"{{$json.fileType}}\",\n  \"{{$json.metadata}}\"\n]\n\n\n"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        304,
+        144
+      ],
+      "id": "aa554816-4a48-4e10-bb9b-748229884062",
+      "name": "Create Document",
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Debug: Eingabedaten anzeigen\nconst item = $input.first().json;\nconsole.log('▶️ Raw input:', JSON.stringify(item, null, 2));\n\n// Basisdaten holen\nconst fileName = item.fileName || item.metadata?.original_filename || 'unnamed.txt';\nconst fileType = (item.fileType || fileName.split('.').pop()?.toLowerCase() || 'txt');\nconst fileSize = item.fileSize || 0;\nconst filePath = item.filePath || null;\n\n// fileContent: zuerst direkt, dann Fallback auf metadata.file_content\nlet fileContent = item.fileContent || null;\n\nif (!fileContent && item.metadata && typeof item.metadata === 'object') {\n  fileContent = item.metadata.file_content || null;\n  if (fileContent) {\n    console.log('ℹ️ Fallback: fileContent aus metadata.file_content übernommen');\n  }\n}\n\n// Validierung\nif (!fileName) {\n  throw new Error('❌ Missing required field: fileName');\n}\n\nif (!fileContent && !filePath) {\n  throw new Error('❌ Missing required content: either fileContent (base64) or filePath must be provided');\n}\n\n// Base64-Encoding für Text falls nötig\nlet processedContent = fileContent;\nif (fileContent && ['txt', 'md', 'log'].includes(fileType)) {\n  const isBase64 = /^[A-Za-z0-9+/=\\s]+$/.test(fileContent);\n  if (!isBase64) {\n    processedContent = Buffer.from(fileContent, 'utf8').toString('base64');\n    console.log('📦 Klartext wurde zu base64 kodiert');\n  }\n}\n\n// Metadaten aufbauen\nconst metadata = {\n  ...(item.metadata || {}),\n  source: 'n8n',\n  uploadedAt: new Date().toISOString(),\n  original_filename: fileName,\n  processed: false,\n  content_type: 'base64',\n  file_content: processedContent\n};\n\n// Schätzung Seitenzahl\nconst estimatedPages = Math.max(1, Math.floor(fileSize / 100000));\n\n// Priorität anhand Dateityp\nconst priority = fileType.includes('pdf') ? 8 : 5;\n\n// Output vorbereiten\nconst output = {\n  fileName,\n  fileType,\n  filePath,\n  fileSize,\n  fileContent: processedContent,\n  estimatedPages,\n  priority,\n  metadata,\n  status: 'ready_for_processing'\n};\n\nconsole.log('✅ Processed upload data:', JSON.stringify(output, null, 2));\nreturn [output];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "e5c8c27c-0425-4761-83ed-220157545087",
+      "name": "Code"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Document Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "Process Document Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Document Data": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Document": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Create Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b3db507c-377e-4c17-9be9-02eb778fd463",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ea5d82e8e516069c37d2848a89101cd5249268f1ee9ad27e6599d64c520de1dd"
+  },
+  "id": "VOgyhxQ9HeTw8dDG",
+  "tags": []
+}

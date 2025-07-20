@@ -1,0 +1,483 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        }
+      },
+      "id": "86037974-0928-4929-8e5d-95f2123c77f6",
+      "name": "Night Enhancement Trigger1",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -1808,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get ENHANCEMENT tasks from processing_queue (created by OCR Agent)\nSELECT \n  pq.id as queue_id,\n  pq.document_id,\n  pq.task_type,\n  pq.priority,\n  d.original_name,\n  d.file_type\nFROM processing_queue pq\nJOIN documents d ON pq.document_id = d.id\nWHERE pq.status = 'pending' \n  AND pq.task_type = 'enhance'\n  AND d.status = 'completed'\nORDER BY pq.priority DESC, pq.created_at ASC\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "ac43a37c-99fc-4559-899a-6d65a7c85511",
+      "name": "Get Enhancement Tasks1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -1520,
+        -64
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.queue_id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "2e0fbad0-87eb-4a4f-ad9f-dc1bb4696890",
+      "name": "Check Tasks Available1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1360,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mark enhancement task as processing\nUPDATE processing_queue \nSET status = 'processing',\n    started_at = NOW()\nWHERE id = '{{ $json.queue_id }}'::uuid\nRETURNING id, document_id;",
+        "options": {}
+      },
+      "id": "12e8d405-7a47-4e3a-ab35-79b53f633839",
+      "name": "Mark Task Processing1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        -208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Get chunks that need enhancement for THIS document\nSELECT \n  c.id as chunk_id,\n  c.document_id,\n  c.content,\n  c.content_type,\n  c.page_number,\n  c.chunk_index,\n  c.metadata,\n  d.original_name\nFROM chunks c\nJOIN documents d ON c.document_id = d.id\nWHERE c.document_id = '{{ $('Get Enhancement Tasks').item.json.document_id }}'::uuid\n  AND c.status IN ('processed', 'raw')\n  AND NOT EXISTS (\n    SELECT 1 FROM enhanced_chunks ec \n    WHERE ec.original_chunk_id = c.id\n  )\n  AND LENGTH(c.content) > 50\nORDER BY c.chunk_index ASC\nLIMIT 5;",
+        "options": {}
+      },
+      "id": "0b3ecf34-1e0e-4882-b372-9bef490e64af",
+      "name": "Get Document Chunks1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -928,
+        -208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const chunk = $input.first().json;\nconst task = $('Get Enhancement Tasks1').first().json;\nconsole.log(`Processing chunk ${chunk.chunk_id} from ${chunk.original_name}`);\nconst content = chunk.content || '';\nconst contentType = chunk.content_type || 'text';\n// Generate enhancement prompt based on content type\nlet enhancementPrompt = '';\nif (contentType === 'table' || content.includes('|') || /\\t.*\\t/.test(content)) {\n  enhancementPrompt = `Improve this table data:\\n\\n\"${content}\"\\n\\nTasks:\\n1. Fix OCR errors in table structure\\n2. Standardize formatting\\n3. Preserve all numerical data exactly\\n4. Improve readability\\n\\nReturn ONLY the improved table content.`;\n} else {\n  enhancementPrompt = `Improve this text:\\n\\n\"${content}\"\\n\\nTasks:\\n1. Fix OCR errors and typos\\n2. Improve grammar and sentence structure\\n3. Preserve all factual information\\n4. Use professional language\\n5. Keep the same length approximately\\n\\nReturn ONLY the improved text.`;\n}\n// Generate categorization prompt\nconst categorizationPrompt = `Extract metadata from this content:\\n\\n\"${content.substring(0, 800)}...\"\\n\\nRespond in JSON format:\\n{\\n  \\\"categories\\\": [\\\"category1\\\", \\\"category2\\\"],\\n  \\\"key_topics\\\": [\\\"topic1\\\", \\\"topic2\\\", \\\"topic3\\\"],\\n  \\\"extracted_metadata\\\": {\\n    \\\"keywords\\\": [\\\"keyword1\\\", \\\"keyword2\\\"],\\n    \\\"entities\\\": [\\\"entity1\\\", \\\"entity2\\\"],\\n    \\\"summary\\\": \\\"brief summary\\\",\\n    \\\"document_type\\\": \\\"type\\\"\n  },\n  \"detected_references\": [\"ref1\", \"ref2\"],\n  \"business_relevance\": \"high|medium|low\"\n}\";\nreturn [{\n  chunk_id: chunk.chunk_id,\n  document_id: chunk.document_id,\n  original_content: content,\n  content_type: contentType,\n  chunk_index: chunk.chunk_index,\n  page_number: chunk.page_number,\n  original_name: chunk.original_name,\n  enhancement_prompt: enhancementPrompt,\n  categorization_prompt: categorizationPrompt,\n  processing_start: new Date().toISOString(),\n  queue_id: task.queue_id\n}];"
+      },
+      "id": "5b5a8023-d415-4cbe-9ac5-5b48b8c8ace6",
+      "name": "Prepare LLM Processing1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.enhancement_prompt }}"
+            },
+            {
+              "name": "stream",
+              "value": false
+            },
+            {
+              "name": "options",
+              "value": {
+                "temperature": 0.1,
+                "top_p": 0.9
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "70066b1e-eb65-41e3-8a99-e6b5b2612ce2",
+      "name": "LLM Enhancement1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -480,
+        -304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.categorization_prompt }}"
+            },
+            {
+              "name": "stream",
+              "value": false
+            },
+            {
+              "name": "options",
+              "value": {
+                "temperature": 0.3,
+                "top_p": 0.9
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f8310026-b0fe-44fc-9dfd-638434501072",
+      "name": "LLM Categorization1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        -480,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const chunk = $('Prepare LLM Processing1').first().json;\nconst enhancement = $('LLM Enhancement1').first().json;\nconst categorization = $('LLM Categorization1').first().json;\nconsole.log('Combining LLM results for chunk:', chunk.chunk_id);\n// Parse LLM responses safely\nfunction safeParseLLMResponse(response, fallback = {}) {\n  try {\n    const content = response.response || response.text || '';\n    // Try to extract JSON from the response\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      return JSON.parse(jsonMatch[0]);\n    }\n    return fallback;\n  } catch (e) {\n    console.warn('Failed to parse LLM response:', e.message);\n    return fallback;\n  }\n}\n// Parse categorization results\nconst categorizationResult = safeParseLLMResponse(categorization, {\n  categories: [],\n  key_topics: [],\n  extracted_metadata: { keywords: [], entities: [], summary: '', document_type: 'unknown' },\n  detected_references: [],\n  business_relevance: 'medium'\n});\n// Get enhanced content (plain text response)\nconst enhancedContent = enhancement.response || enhancement.text || chunk.original_content;\n// Calculate confidence score\nconst confidence = Math.min(1.0, (\n  0.6 + // base confidence\n  (enhancedContent.length > chunk.original_content.length * 0.8 ? 0.2 : 0) +\n  (categorizationResult.categories.length > 0 ? 0.1 : 0) +\n  (categorizationResult.key_topics.length > 0 ? 0.1 : 0)\n));\n// Prepare enhanced chunk data for new enhanced_chunks table\nconst enhancedChunk = {\n  chunk_id: chunk.chunk_id,\n  document_id: chunk.document_id,\n  original_chunk_id: chunk.chunk_id,\n  chunk_index: chunk.chunk_index,\n  // Enhanced content\n  enhanced_content: enhancedContent.trim(),\n  original_content: chunk.original_content,\n  // LLM extracted data (as JSON strings)\n  categories: JSON.stringify(categorizationResult.categories || []),\n  extracted_metadata: JSON.stringify(categorizationResult.extracted_metadata || {}),\n  detected_references: JSON.stringify(categorizationResult.detected_references || []),\n  key_topics: JSON.stringify(categorizationResult.key_topics || []),\n  // Content structure\n  content_type: chunk.content_type || 'text',\n  page_number: chunk.page_number,\n  // LLM processing info\n  enhancement_model: process.env.DEFAULT_MODEL || 'mistral',\n  confidence_score: confidence,\n  processing_time: Date.now() - new Date(chunk.processing_start).getTime(),\n  // Quality control\n  quality_score: Math.min(1.0, confidence + 0.1),\n  manual_review_needed: confidence < 0.6,\n  // Additional metadata\n  business_relevance: categorizationResult.business_relevance || 'medium',\n  queue_id: chunk.queue_id\n};\nconsole.log(`Enhanced chunk prepared: confidence=${confidence}, quality=${enhancedChunk.quality_score}`);\nreturn [enhancedChunk];"
+      },
+      "id": "d1a360fb-7246-438d-84eb-b9335b37f5ca",
+      "name": "Combine Results1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Insert into enhanced_chunks table (NEW STRUCTURE)\nINSERT INTO enhanced_chunks (\n  document_id,\n  original_chunk_id,\n  chunk_index,\n  enhanced_content,\n  original_content,\n  categories,\n  extracted_metadata,\n  detected_references,\n  key_topics,\n  content_type,\n  page_number,\n  enhancement_model,\n  confidence_score,\n  processing_time,\n  quality_score,\n  manual_review_needed\n) VALUES (\n  '{{ $json.document_id }}'::uuid,\n  '{{ $json.original_chunk_id }}'::uuid,\n  {{ $json.chunk_index }},\n  '{{ $json.enhanced_content }}',\n  '{{ $json.original_content }}',\n  '{{ $json.categories }}'::jsonb,\n  '{{ $json.extracted_metadata }}'::jsonb,\n  '{{ $json.detected_references }}'::jsonb,\n  '{{ $json.key_topics }}'::jsonb,\n  '{{ $json.content_type }}',\n  {{ $json.page_number }},\n  '{{ $json.enhancement_model }}',\n  {{ $json.confidence_score }},\n  {{ $json.processing_time }},\n  {{ $json.quality_score }},\n  {{ $json.manual_review_needed }}\n)\nRETURNING id, confidence_score, quality_score;",
+        "options": {}
+      },
+      "id": "7410eab8-ad60-4d67-8f8e-2fae828b405f",
+      "name": "Save Enhanced Chunk1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        -208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Check if all chunks for this document are enhanced\nWITH document_stats AS (\n  SELECT \n    COUNT(c.id) as total_chunks,\n    COUNT(ec.id) as enhanced_chunks\n  FROM chunks c\n  LEFT JOIN enhanced_chunks ec ON c.id = ec.original_chunk_id\n  WHERE c.document_id = '{{ $('Combine Results').item.json.document_id }}'::uuid\n    AND c.status NOT IN ('archived', 'deleted')\n)\nSELECT \n  CASE \n    WHEN enhanced_chunks >= total_chunks THEN 'completed'\n    ELSE 'processing'\n  END as task_status,\n  total_chunks,\n  enhanced_chunks\nFROM document_stats;",
+        "options": {}
+      },
+      "id": "e94b438c-cbf9-4fd8-816e-ad581deb1cef",
+      "name": "Check Completion1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        176,
+        -208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Complete the enhancement task\nUPDATE processing_queue \nSET status = '{{ $json.task_status }}',\n    completed_at = NOW()\nWHERE id = '{{ $('Combine Results').item.json.queue_id }}'::uuid\nRETURNING id, status;",
+        "options": {}
+      },
+      "id": "1b0e5b96-0409-4514-a034-bb6a310a7260",
+      "name": "Complete Task1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        400,
+        -208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const enhanced = $('Save Enhanced Chunk1').first().json;\nconst completion = $('Check Completion1').first().json;\nconst chunk = $('Combine Results1').first().json;\nconsole.log('=== CHUNK ENHANCED ===');\nconsole.log('Enhanced Chunk ID:', enhanced.id);\nconsole.log('Document ID:', chunk.document_id);\nconsole.log('Confidence Score:', enhanced.confidence_score);\nconsole.log('Quality Score:', enhanced.quality_score);\nconsole.log('Progress:', `${completion.enhanced_chunks}/${completion.total_chunks}`);\nconsole.log('Task Status:', completion.task_status);\nconsole.log('Processing Time:', chunk.processing_time, 'ms');\nconsole.log('=====================');\nreturn [{\n  success: true,\n  enhanced_chunk_id: enhanced.id,\n  document_id: chunk.document_id,\n  confidence_score: enhanced.confidence_score,\n  quality_score: enhanced.quality_score,\n  progress: `${completion.enhanced_chunks}/${completion.total_chunks}`,\n  task_status: completion.task_status,\n  processing_time_ms: chunk.processing_time,\n  message: `Enhanced chunk ${chunk.chunk_index} - ${completion.task_status}`\n}];"
+      },
+      "id": "a1b01443-ff80-4c68-ab0d-307fe1e14f8f",
+      "name": "Log Success1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        -208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "console.log('=== NO ENHANCEMENT TASKS ===');\nconsole.log('Time:', new Date().toISOString());\nconsole.log('Status: All documents enhanced or no pending enhancement tasks');\nconsole.log('============================');\nreturn [{\n  message: 'No enhancement tasks found',\n  timestamp: new Date().toISOString(),\n  status: 'idle'\n}];"
+      },
+      "id": "21c81356-fd1f-495e-8ea6-7c0a0174549d",
+      "name": "Log No Tasks1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n// Output all input data\nconsole.log('🔍 Input data:', JSON.stringify(input, null, 2));\n// If body is nested\nif (input.body) {\n  console.log('📦 body:', JSON.stringify(input.body, null, 2));\n}\nreturn [input];"
+      },
+      "id": "9c43fe63-0b83-4eba-b685-b641db92b9cb",
+      "name": "Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1632,
+        96
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Night Enhancement Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Get Enhancement Tasks1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Enhancement Tasks1": {
+      "main": [
+        [
+          {
+            "node": "Check Tasks Available1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Tasks Available1": {
+      "main": [
+        [
+          {
+            "node": "Mark Task Processing1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log No Tasks1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Task Processing1": {
+      "main": [
+        [
+          {
+            "node": "Get Document Chunks1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Document Chunks1": {
+      "main": [
+        [
+          {
+            "node": "Prepare LLM Processing1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare LLM Processing1": {
+      "main": [
+        [
+          {
+            "node": "LLM Enhancement1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "LLM Categorization1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Enhancement1": {
+      "main": [
+        [
+          {
+            "node": "Combine Results1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Categorization1": {
+      "main": [
+        [
+          {
+            "node": "Combine Results1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Results1": {
+      "main": [
+        [
+          {
+            "node": "Save Enhanced Chunk1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Enhanced Chunk1": {
+      "main": [
+        [
+          {
+            "node": "Check Completion1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Completion1": {
+      "main": [
+        [
+          {
+            "node": "Complete Task1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Task1": {
+      "main": [
+        [
+          {
+            "node": "Log Success1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "ca079340-26bb-4837-93c3-5166cb966864",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ea5d82e8e516069c37d2848a89101cd5249268f1ee9ad27e6599d64c520de1dd"
+  },
+  "id": "WeWJJZcUdlOsdNdK",
+  "tags": [
+    {
+      "createdAt": "2025-07-19T07:28:56.241Z",
+      "updatedAt": "2025-07-19T07:28:56.241Z",
+      "id": "4eFDUzvaGfSTVbz0",
+      "name": "semantic-doc-finder"
+    }
+  ]
+}

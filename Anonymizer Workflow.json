@@ -1,0 +1,149 @@
+{
+  "name": "External API Processing with Anonymizer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "external-llm-process",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "external-api-webhook",
+      "name": "External API Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "external-llm-processing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst content = input.body?.content || input.content || '';\nconst useExternalAPI = input.body?.use_external_api || false;\nconst externalProvider = input.body?.external_provider || 'openai';\n\nconsole.log('Anonymizer Processing:');\nconsole.log('- Content length:', content.length);\nconsole.log('- Use external API:', useExternalAPI);\nconsole.log('- Provider:', externalProvider);\n\nconst piiPatterns = {\n  email: {\n    pattern: /\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b/g,\n    replacement: '[EMAIL_MASKED]'\n  },\n  phone: {\n    pattern: /(?:\\+49|0049|0)\\s*(?:\\d{2,4}[\\s-]?\\d{4,}|\\d{3,4}[\\s-]?\\d{6,})/g,\n    replacement: '[PHONE_MASKED]'\n  },\n  iban: {\n    pattern: /\\b[A-Z]{2}\\d{2}\\s?(?:[A-Z0-9]\\s?){1,30}\\b/g,\n    replacement: '[IBAN_MASKED]'\n  }\n};\n\nconst anonymizationMap = {};\nlet anonymizedContent = content;\nlet anonymizedCounter = 0;\n\nif (useExternalAPI) {\n  console.log('Applying anonymization for external API...');\n  \n  for (const [piiType, config] of Object.entries(piiPatterns)) {\n    const matches = content.match(config.pattern);\n    \n    if (matches) {\n      console.log(`Found ${matches.length} ${piiType} matches`);\n      \n      matches.forEach((match, index) => {\n        const anonymizedValue = `${config.replacement}_${anonymizedCounter++}`;\n        anonymizationMap[anonymizedValue] = match;\n        anonymizedContent = anonymizedContent.replace(match, anonymizedValue);\n      });\n    }\n  }\n  \n  console.log(`Anonymization complete. ${Object.keys(anonymizationMap).length} items masked.`);\n} else {\n  console.log('No anonymization needed - using local processing');\n}\n\nreturn [{\n  original_content: content,\n  use_external_api: useExternalAPI,\n  external_provider: externalProvider,\n  anonymized_content: anonymizedContent,\n  anonymization_map: anonymizationMap,\n  anonymization_count: Object.keys(anonymizationMap).length,\n  content_length_original: content.length,\n  content_length_anonymized: anonymizedContent.length,\n  processing_timestamp: new Date().toISOString()\n}];"
+      },
+      "id": "anonymizer-processor",
+      "name": "Anonymizer Processor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.use_external_api }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-external-api",
+      "name": "Check External API",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ollama:11434/api/generate",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $env.DEFAULT_MODEL || 'mistral' }}"
+            },
+            {
+              "name": "prompt",
+              "value": "Verbessere den folgenden Text:\\n\\n{{ $json.original_content }}\\n\\nVerbesserte Version:"
+            },
+            {
+              "name": "stream",
+              "value": false
+            }
+          ]
+        }
+      },
+      "id": "local-ollama-enhancement",
+      "name": "Local Ollama Enhancement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\\n  \\\"success\\\": true,\\n  \\\"processing_method\\\": \\\"{{ $json.use_external_api ? 'external' : 'local' }}\\\",\\n  \\\"enhanced_content\\\": \\\"{{ $json.use_external_api ? $json.enhanced_content_final : $json.response }}\\\",\\n  \\\"privacy_protected\\\": true\\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "External API Webhook": {
+      "main": [
+        [
+          {
+            "node": "Anonymizer Processor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anonymizer Processor": {
+      "main": [
+        [
+          {
+            "node": "Check External API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check External API": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Local Ollama Enhancement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Local Ollama Enhancement": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
