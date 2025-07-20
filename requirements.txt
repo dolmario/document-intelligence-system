@@ -1,4 +1,4 @@
-# Document Intelligence System Dependencies
+# Semantic Document Finder System Dependencies
 # Tested with Python 3.11, optimized for Docker deployment
 
 # Core Framework
