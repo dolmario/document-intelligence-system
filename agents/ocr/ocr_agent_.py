@@ -1,11 +1,6 @@
 # ocr_agent.py
 # Enhanced OCR Agent mit Streaming-Unterstützung 
 
-
-# agents/ocr/ocr_agent.py
-# Enhanced OCR Agent V2 - VOLLSTÄNDIG STANDARDISIERT für N8N Integration
-# Alle extract_* Methoden geben garantiert List[Dict] zurück
-
 import asyncio
 import base64
 import gc
