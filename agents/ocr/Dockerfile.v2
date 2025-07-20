@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application
-COPY agents/ocr/ocr_agent_optimized.py ocr_agent.py
+COPY agents/ocr/ocr_agent.py ocr_agent.py
 
 # Create necessary directories
 RUN mkdir -p /app/logs /data
