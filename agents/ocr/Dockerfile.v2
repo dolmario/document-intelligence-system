@@ -14,18 +14,13 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies with specific versions to avoid conflicts
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-
-# Install numpy first to avoid ABI issues
-RUN pip install --no-cache-dir numpy==1.24.3
-
-# Copy and install requirements
+# Install Python dependencies
 COPY agents/ocr/requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application
-COPY agents/ocr/ocr_agent.py ocr_agent.py
+COPY agents/ocr/ocr_agent_optimized.py ocr_agent.py
 
 # Create necessary directories
 RUN mkdir -p /app/logs /data
