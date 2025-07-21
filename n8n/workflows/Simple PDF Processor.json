@@ -1,0 +1,365 @@
+{
+  "name": "My workflow 7",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        }
+      },
+      "id": "285e78f3-caff-4729-bde3-d0f2cdadfd37",
+      "name": "Scan Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -3072,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 🧾 RAW-Output holen\nconst output = $input.first().json.stdout;\n\nif (!output || output.trim() === '') {\n  console.log('❌ Keine Dateien gefunden');\n  return [];\n}\n\n// 📁 Pfade extrahieren\nconst filePaths = output.trim().split('\\n').filter(path => path.length > 0);\n\n// 🧠 Für jede Datei: filename + fileType extrahieren + richtig formatiertes JSON bauen\nreturn filePaths.map((fullPath, i) => {\n  const fileName = fullPath.split('/').pop();\n  const fileExt = fileName.split('.').pop().toLowerCase();\n  \n  console.log(`📄 [${i+1}/${filePaths.length}] ${fileName} (${fileExt})`);\n\n  return {\n    json: {\n      filePath: fullPath,\n      fileName: fileName,\n      fileType: fileExt,  // pdf, png, jpg, txt, etc.\n      fileIndex: i\n    }\n  };\n});\n\n"
+      },
+      "id": "017e3824-3ecf-46ed-a93a-4c230dea730b",
+      "name": "Parse File List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2464,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as count \nFROM documents \nWHERE original_name = $1\n\n\n",
+        "options": {
+          "queryReplacement": "=[\"{{ $('Parse File List').item.json.fileName }}\"]"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -944,
+        560
+      ],
+      "id": "e0309ec3-8027-458a-b7ae-f78ada21d835",
+      "name": "Check if Exists",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.count }}",
+              "operation": "equal"
+            }
+          ]
+        }
+      },
+      "id": "f0dbcc88-01c4-4c73-bbbb-c21e47a1c89f",
+      "name": "Is New File?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -704,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// NEUE VERSION - ohne base64!\nconst fileInfo = $('Parse File List').item.json;\nconst fileName = fileInfo.fileName;\nconst filePath = fileInfo.filePath;\n\nconsole.log(`📄 Verarbeite: ${fileName} (direkter Pfad)`);\n\nreturn [{\n  fileName: fileName,\n  fileType: 'pdf',\n  // KEIN fileContent mehr!\n  metadata: {\n    file_path: filePath,  // ← Das reicht!\n    source: 'auto_folder_scan',\n    uploadedAt: new Date().toISOString(),\n    original_filename: fileName,\n    processed: false,\n    auto_discovered: true\n  }\n}];"
+      },
+      "id": "86bd95aa-6e71-4e52-9459-6d41f0b257eb",
+      "name": "Prepare Upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH new_doc AS (\n  INSERT INTO documents (source_id, original_name, file_type, metadata)\n  VALUES (\n    (SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1),\n    $1, $2, $3::jsonb\n  )\n  RETURNING id\n)\nINSERT INTO processing_queue (document_id, task_type, priority)\nSELECT id, 'extract', 8 FROM new_doc\nRETURNING (SELECT id FROM new_doc) as document_id;",
+        "options": {
+          "queryReplacement": "=[\n  \"{{$json.fileName}}\",\n  \"{{$json.fileType}}\",\n  \"{{$json.metadata}}\"\n]"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -96,
+        496
+      ],
+      "id": "7c957ad2-91c6-4508-bbbc-78107b9e8c98",
+      "name": "Create Document",
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log successful processing\nconst uploadData = $('Prepare Upload').item.json;\nconst result = $input.first().json;\n\nconsole.log('=== PDF AUTO-SCAN SUCCESS ===');\nconsole.log('📄 File:', uploadData.fileName);\nconsole.log('🆔 Document ID:', result.document_id);\nconsole.log('🚀 Status: Queued for OCR');\nconsole.log('==============================');\n\nreturn [{\n  fileName: uploadData.fileName,\n  documentId: result.document_id,\n  status: 'success',\n  message: `${uploadData.fileName} erfolgreich eingereiht`\n}];"
+      },
+      "id": "98dcb5f2-bc01-4bbb-9906-3f188b5f4cfc",
+      "name": "Log Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fileInfo = $input.first().json;\n\nif (!fileInfo.exists) {\n  return [{ json: { shouldProcess: true } }]; // ✅ Dummy-Output\n}\n\n\n// ✅ Datei existiert → skip loggen\nconsole.log(`⏭️ Überspringe bereits verarbeitete Datei: ${fileInfo.fileName}`);\n\nreturn [{\n  fileName: fileInfo.fileName,\n  status: 'skipped',\n  reason: 'already_exists'\n}];\n"
+      },
+      "id": "175bf56e-65d1-47b6-9f01-184a4852a2e0",
+      "name": "Log Skipped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -496,
+        656
+      ]
+    },
+    {
+      "parameters": {
+        "command": "# Ersetze Command:\nfind /data \\( -name \"*.pdf\" -o -name \"*.PDF\" -o -name \"*.png\" -o -name \"*.PNG\" -o -name \"*.jpg\" -o -name \"*.JPG\" -o -name \"*.jpeg\" -o -name \"*.JPEG\" -o -name \"*.tiff\" -o -name \"*.TIFF\" -o -name \"*.txt\" -o -name \"*.TXT\" -o -name \"*.docx\" -o -name \"*.DOCX\" \\) | head -10"
+      },
+      "id": "3c8ed7be-3929-4e90-bc31-e5cffbe10c1c",
+      "name": "Find PDFs1",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -2800,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=stat -c%s \"{{ $json.filePath }}\""
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -2256,
+        560
+      ],
+      "id": "24cf2be0-eabe-4e11-abe8-cc9f923662fb",
+      "name": "Execute Command"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3471c012-7a18-40f0-b73a-3a94ffc5c367",
+              "leftValue": "={{ $json.stdout }}",
+              "rightValue": 10485760,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            },
+            {
+              "id": "30ef66b2-552a-41a0-b658-716d7061f14a",
+              "leftValue": "",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1856,
+        576
+      ],
+      "id": "810ae031-08b1-4f1d-b621-c93c2c5c3ccd",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "executeOnce": false,
+        "command": "=split -b 12m \"{{ $('Parse File List').item.json.filePath }}\" part_\nfor file in part_*; do\n  base64 -w 0 $file > \"${file}.b64\"\ndone\n\n\n\n"
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        -1600,
+        704
+      ],
+      "id": "edf3ef4a-0f93-44a3-a663-f995f636caef",
+      "name": "Execute Command1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Scan Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find PDFs1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse File List": {
+      "main": [
+        [
+          {
+            "node": "Execute Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Exists": {
+      "main": [
+        [
+          {
+            "node": "Is New File?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New File?": {
+      "main": [
+        [
+          {
+            "node": "Log Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Upload": {
+      "main": [
+        [
+          {
+            "node": "Create Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Document": {
+      "main": [
+        [
+          {
+            "node": "Log Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find PDFs1": {
+      "main": [
+        [
+          {
+            "node": "Parse File List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Command": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Check if Exists",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute Command1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Command1": {
+      "main": [
+        [
+          {
+            "node": "Check if Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6bdf9568-6783-42cd-9950-da80bf42672c",
+  "meta": {
+    "instanceId": "ea5d82e8e516069c37d2848a89101cd5249268f1ee9ad27e6599d64c520de1dd"
+  },
+  "id": "hL5cnt3pyVTExu9p",
+  "tags": []
+}
