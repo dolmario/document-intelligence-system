@@ -12,8 +12,7 @@ RUN apt-get update && apt-get install -y \
 # Python-Abhängigkeiten installieren
 COPY agents/ocr/requirements.txt requirements.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir pydantic==1.10.13  # Explizit hinzufügen
+    pip install --no-cache-dir -r requirements.txt
 
 # OCR-spezifische Systempakete installieren
 RUN apt-get update && apt-get install -y \

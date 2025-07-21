@@ -1,4 +1,4 @@
-# Core dependencies with fixed versions
+# Core dependencies
 asyncpg==0.29.0
 pytesseract==0.3.10
 Pillow==10.1.0
@@ -6,9 +6,18 @@ pdf2image==1.16.3
 aiofiles==23.2.1
 beautifulsoup4==4.12.2
 
-# Optional dependencies (will be imported conditionally)
+# WICHTIG: Pydantic hinzufügen!
+pydantic==2.5.0
+
+# Memory monitoring
+psutil==5.9.6
+
+# GPU support (Standard PyTorch)
+torch==2.1.0
+torchvision==0.16.0
+
+# Optional dependencies
 python-docx==1.1.0
-# For pandas - specific versions to avoid conflicts
 numpy==1.24.3
 pandas==2.0.3
 openpyxl==3.1.2

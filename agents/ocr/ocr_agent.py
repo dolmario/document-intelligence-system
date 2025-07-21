@@ -11,6 +11,8 @@ import re
 import hashlib
 import io
 import zipfile
+import torch  # GPU support
+import psutil  # Memory monitoring
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Literal
@@ -22,7 +24,7 @@ from PIL import Image
 import pdf2image
 from pydantic import BaseModel, Field, validator
 
-# Bedingte Imports
+# Bedingte Imports (bleibt wie es war)
 try:
     from docx import Document as DocxDocument
     HAS_DOCX = True
@@ -121,28 +123,44 @@ class DocumentMetadata(BaseModel):
         """Auto-determine processing mode based on file size"""
         if self.processing_mode != "auto":
             return self.processing_mode
-            
-        # Check file size
-        if self.get_file_path():
-            try:
-                file_size = os.path.getsize(self.get_file_path())
-                file_size_mb = file_size / (1024 * 1024)
-                
-                # Auto-decide based on size
-                if file_size_mb > 10:
-                    return "streaming"
-                else:
-                    return "in_memory"
-            except:
-                pass
         
-        return "in_memory"  # Default
+        file_path = self.get_file_path()
+        file_content = self.get_file_content()
+    
+        size_mb = 0
+        if file_path and os.path.exists(file_path):
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            logger.info(f"📏 File size from path: {size_mb:.1f}MB")
+        elif file_content:
+            # Base64 size estimation (base64 is ~33% larger than original)
+            size_mb = (len(file_content) * 0.75) / (1024 * 1024)
+            logger.info(f"📏 File size from base64: {size_mb:.1f}MB")
+    
+        mode = "streaming" if size_mb > 10 else "in_memory" 
+        logger.info(f"🔧 Processing mode: {mode} (size: {size_mb:.1f}MB)")
+        return mode
 
 
 class OCRAgentOptimized:
     """
     Optimierter OCR Agent mit N8N-Integration und robuster Fehlerbehandlung
     """
+    def check_memory_before_processing(self, file_size_mb: float) -> str:
+        """Check system memory and decide processing mode"""
+        try:
+            memory = psutil.virtual_memory()
+            available_gb = memory.available / (1024**3)
+            
+            logger.info(f"💾 Memory: {memory.percent:.1f}% used, {available_gb:.1f}GB available")
+            
+            # Force streaming if memory critical OR file large
+            if memory.percent > 80 or file_size_mb > 50:
+                logger.warning(f"⚠️ Memory pressure detected, forcing streaming mode")
+                return "streaming"
+            return "auto"
+        except Exception as e:
+            logger.warning(f"Memory check failed: {e}")
+            return "auto"
     
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -162,6 +180,16 @@ class OCRAgentOptimized:
         logger.info(f"   • Chunk-Größe: {self.chunk_size}")
         logger.info(f"   • Max File Size: {self.MAX_FILE_SIZE / (1024*1024):.0f}MB")
         logger.info(f"   • DB URL: {db_url.split('@')[1] if '@' in db_url else 'localhost'}")
+
+        try:
+            if torch.cuda.is_available():
+                gpu_count = torch.cuda.device_count()
+                gpu_name = torch.cuda.get_device_name(0) if gpu_count > 0 else "Unknown"
+                logger.info(f"🚀 GPU available: {gpu_count}x {gpu_name}")
+            else:
+                logger.warning("❌ No GPU available - running CPU only")
+        except Exception as e:
+            logger.warning(f"❌ GPU check failed: {e}")
 
     async def connect(self):
         """Verbinde mit der PostgreSQL-Datenbank"""
