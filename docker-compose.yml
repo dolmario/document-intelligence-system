@@ -79,6 +79,15 @@ services:
         condition: service_healthy
     networks:
       - semantic_network
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
   search_api:
