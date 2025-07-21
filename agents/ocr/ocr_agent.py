@@ -129,7 +129,7 @@ class DocumentMetadata(BaseModel):
                 file_size_mb = file_size / (1024 * 1024)
                 
                 # Auto-decide based on size
-                if file_size_mb > 100:
+                if file_size_mb > 10:
                     return "streaming"
                 else:
                     return "in_memory"
