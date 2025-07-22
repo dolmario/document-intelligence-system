@@ -1,6 +1,6 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 asyncpg==0.29.0
-qdrant-client==1.7.0
+# qdrant-client==1.7.0	# Deaktiviert - optional für Vektor-Suche
 httpx==0.25.2
 pydantic==2.5.0

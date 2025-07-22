@@ -133,8 +133,11 @@ async def get_embedding(text: str) -> List[float]:
 
 # === STARTUP/SHUTDOWN ===
 
+# services/search/api.py - FINAL VERSION
+# Erweitere die startup_event Funktion in der bestehenden API
+
 async def startup_event():
-    global db_pool
+    global db_pool, qdrant_client
     
     db_url = os.getenv('DATABASE_URL')
     if not db_url:
@@ -145,7 +148,7 @@ async def startup_event():
     for attempt in range(max_retries):
         try:
             db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=20)
-            logger.info("Database connection established")
+            logger.info("✅ Database connection established")
             break
         except Exception as e:
             logger.warning(f"Database connection attempt {attempt+1}/{max_retries} failed: {str(e)}")
@@ -154,7 +157,51 @@ async def startup_event():
             else:
                 raise
     
-    logger.info("Enhanced Search API V2 started successfully")
+    # === QDRANT OPTIONAL INITIALIZATION ===
+    qdrant_url = os.getenv('QDRANT_URL')
+    enable_vector_search = os.getenv('ENABLE_VECTOR_SEARCH', 'false').lower() == 'true'
+    
+    if qdrant_url and enable_vector_search:
+        try:
+            logger.info(f"🔗 Attempting Qdrant connection: {qdrant_url}")
+            
+            # Try import (might not be installed)
+            try:
+                from qdrant_client import QdrantClient
+                from qdrant_client.models import Distance, VectorParams
+            except ImportError:
+                logger.warning("📦 Qdrant client not installed - continuing without vector search")
+                qdrant_client = None
+                return
+            
+            # Try connection
+            qdrant_client = QdrantClient(url=qdrant_url)
+            
+            # Test connection with timeout
+            collections = qdrant_client.get_collections()
+            
+            # Create collection if needed
+            try:
+                qdrant_client.create_collection(
+                    collection_name="documents",
+                    vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+                )
+                logger.info("✅ Qdrant connected - vector search enabled")
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logger.info("✅ Qdrant connected - collection exists")
+                else:
+                    raise e
+                    
+        except Exception as e:
+            logger.warning(f"⚠️ Qdrant connection failed: {str(e)}")
+            logger.info("🔍 Continuing with PostgreSQL search only")
+            qdrant_client = None
+    else:
+        logger.info("🔍 Qdrant disabled - using PostgreSQL search only")
+        qdrant_client = None
+    
+    logger.info("🚀 Enhanced Search API V2 started successfully")
 
 async def shutdown_event():
     if db_pool:
@@ -344,25 +391,20 @@ async def search_raw_chunks_fallback(conn, request: SearchRequest, current_count
         
         chunks = await conn.fetch("""
             SELECT 
-                c.id,
-                c.document_id,
-                c.content,
-                c.content_type,
-                c.page_number,
-                c.metadata,
+                ec.id,
+                ec.document_id,
+                ec.enhanced_content as content,
+                ec.content_type,
+                ec.page_number,
+                ec.extracted_metadata as metadata,
                 d.original_name
-            FROM chunks c
-            JOIN documents d ON c.document_id = d.id
-            WHERE c.content ILIKE $1
-              AND c.status NOT IN ('archived', 'deleted')
+            FROM enhanced_chunks ec          
+            JOIN documents d ON ec.document_id = d.id
+            WHERE ec.enhanced_content ILIKE $1
               AND d.status != 'deleted'
-              AND NOT EXISTS (
-                  SELECT 1 FROM enhanced_chunks ec 
-                  WHERE ec.original_chunk_id = c.id
-              )
-            ORDER BY c.created_at DESC
+            ORDER BY ec.created_at DESC
             LIMIT $2
-        """, f'%{request.query}%', remaining_limit)
+    """, f'%{request.query}%', remaining_limit)
         
         results = []
         for chunk in chunks:
