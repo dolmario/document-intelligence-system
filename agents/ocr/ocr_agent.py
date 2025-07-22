@@ -1,5 +1,5 @@
-# ocr_agent_optimized.py
-# Optimierter OCR Agent mit besten Features aus beiden Versionen
+# ocr_agent_optimized_v2.py
+# Erweiterte Version mit intelligentem PDF-Handling und Multi-Engine Support
 
 import asyncio
 import base64
@@ -11,18 +11,35 @@ import re
 import hashlib
 import io
 import zipfile
-import torch  # GPU support
-import psutil  # Memory monitoring
+import torch
+import psutil
+import fitz  # PyMuPDF
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any, Literal
+from typing import Dict, List, Optional, Union, Any, Literal, Tuple
+from enum import Enum
 
 # Externe Abhängigkeiten
 import asyncpg
 import pytesseract
 from PIL import Image
 import pdf2image
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
+
+# Erweiterte OCR Engines
+try:
+    from paddleocr import PaddleOCR
+    HAS_PADDLE = True
+except ImportError:
+    HAS_PADDLE = False
+    logging.warning("PaddleOCR not available - falling back to Tesseract")
+
+try:
+    import easyocr
+    HAS_EASYOCR = True
+except ImportError:
+    HAS_EASYOCR = False
+    logging.warning("EasyOCR not available - falling back to Tesseract")
 
 # Bedingte Imports (bleibt wie es war)
 try:
@@ -56,10 +73,42 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("OCRAgentOptimized")
+logger = logging.getLogger("OCRAgentV2")
+
+
+# === ENUMS & CONSTANTS ===
+
+class OCREngine(str, Enum):
+    """Verfügbare OCR Engines"""
+    TESSERACT = "tesseract"
+    PADDLEOCR = "paddleocr"
+    EASYOCR = "easyocr"
+    AUTO = "auto"
+
+
+class ExtractionMode(str, Enum):
+    """Extraktionsmodi"""
+    NATIVE = "native"           # Nur native Textextraktion
+    OCR = "ocr"                # Nur OCR
+    HYBRID = "hybrid"          # Native + OCR für beste Ergebnisse
+    AUTO = "auto"              # Automatische Auswahl
 
 
 # === PYDANTIC MODELS ===
+
+class OCRConfig(BaseModel):
+    """OCR Konfiguration"""
+    engine: OCREngine = OCREngine.AUTO
+    languages: List[str] = ["deu", "eng"]
+    confidence_threshold: float = 0.6
+    enable_coordinates: bool = False
+    enable_confidence: bool = True
+    extraction_mode: ExtractionMode = ExtractionMode.AUTO
+    dpi: int = 300
+    
+    class Config:
+        use_enum_values = True
+
 
 class DocumentMetadata(BaseModel):
     """Strukturierte Metadaten mit N8N-Kompatibilität"""
@@ -71,6 +120,9 @@ class DocumentMetadata(BaseModel):
     # Processing configuration
     processing_mode: Literal["auto", "streaming", "in_memory"] = "auto"
     source: str = "unknown"
+    
+    # OCR Configuration
+    ocr_config: Optional[OCRConfig] = None
     
     # File metadata
     original_filename: Optional[str] = None
@@ -89,9 +141,11 @@ class DocumentMetadata(BaseModel):
     processed: bool = False
     
     class Config:
-        extra = "allow"  # Allow additional fields
+        extra = "allow"
     
-    @validator('file_size_mb', pre=True)
+    from pydantic import field_validator  
+    @field_validator('file_size_mb', mode='before')  
+    @classmethod  
     def convert_file_size(cls, v):
         if v is None:
             return None
@@ -119,6 +173,22 @@ class DocumentMetadata(BaseModel):
         """Get filename with fallback"""
         return self.original_filename or self.fileName
     
+    def get_ocr_config(self) -> OCRConfig:
+        """Get OCR config with defaults from environment"""
+        if self.ocr_config:
+            return self.ocr_config
+            
+        # Build from environment variables
+        return OCRConfig(
+            engine=os.getenv("OCR_ENGINE", "auto").lower(),
+            languages=os.getenv("OCR_LANGUAGES", "deu,eng").split(","),
+            confidence_threshold=float(os.getenv("OCR_CONFIDENCE_THRESHOLD", "0.6")),
+            enable_coordinates=os.getenv("ENABLE_COORDINATES", "false").lower() == "true",
+            enable_confidence=os.getenv("ENABLE_CONFIDENCE", "true").lower() == "true",
+            extraction_mode=os.getenv("EXTRACTION_MODE", "auto").lower(),
+            dpi=int(os.getenv("OCR_DPI", "300"))
+        )
+    
     def determine_processing_mode(self) -> str:
         """Auto-determine processing mode based on file size"""
         if self.processing_mode != "auto":
@@ -132,7 +202,6 @@ class DocumentMetadata(BaseModel):
             size_mb = os.path.getsize(file_path) / (1024 * 1024)
             logger.info(f"📏 File size from path: {size_mb:.1f}MB")
         elif file_content:
-            # Base64 size estimation (base64 is ~33% larger than original)
             size_mb = (len(file_content) * 0.75) / (1024 * 1024)
             logger.info(f"📏 File size from base64: {size_mb:.1f}MB")
     
@@ -141,26 +210,336 @@ class DocumentMetadata(BaseModel):
         return mode
 
 
-class OCRAgentOptimized:
-    """
-    Optimierter OCR Agent mit N8N-Integration und robuster Fehlerbehandlung
-    """
-    def check_memory_before_processing(self, file_size_mb: float) -> str:
-        """Check system memory and decide processing mode"""
+class OCRResult(BaseModel):
+    """OCR Ergebnis mit optionalen Koordinaten"""
+    text: str
+    confidence: Optional[float] = None
+    bbox: Optional[List[float]] = None  # [x1, y1, x2, y2]
+    language: Optional[str] = None
+
+
+# === OCR ENGINE IMPLEMENTATIONS ===
+
+class BaseOCREngine:
+    """Basis-Klasse für OCR Engines"""
+    
+    def __init__(self, config: OCRConfig):
+        self.config = config
+        
+    async def process(self, image_bytes: bytes) -> List[OCRResult]:
+        """Process image and return OCR results"""
+        raise NotImplementedError
+
+
+class TesseractEngine(BaseOCREngine):
+    """Tesseract OCR Engine"""
+    
+    def __init__(self, config: OCRConfig):
+        super().__init__(config)
+        self.tesseract_config = "--oem 3 --psm 6"
+        self.tesseract_config_fast = "--oem 1 --psm 6"
+        
+    async def process(self, image_bytes: bytes) -> List[OCRResult]:
+        """Process with Tesseract"""
         try:
-            memory = psutil.virtual_memory()
-            available_gb = memory.available / (1024**3)
+            image = Image.open(io.BytesIO(image_bytes))
             
-            logger.info(f"💾 Memory: {memory.percent:.1f}% used, {available_gb:.1f}GB available")
-            
-            # Force streaming if memory critical OR file large
-            if memory.percent > 80 or file_size_mb > 50:
-                logger.warning(f"⚠️ Memory pressure detected, forcing streaming mode")
-                return "streaming"
-            return "auto"
+            if self.config.enable_coordinates or self.config.enable_confidence:
+                # Use image_to_data for detailed output
+                data = pytesseract.image_to_data(
+                    image,
+                    lang="+".join(self.config.languages),
+                    config=self.tesseract_config,
+                    output_type=pytesseract.Output.DICT
+                )
+                
+                results = []
+                n_boxes = len(data['text'])
+                
+                for i in range(n_boxes):
+                    if data['text'][i].strip():
+                        result = OCRResult(
+                            text=data['text'][i],
+                            confidence=data['conf'][i] / 100.0 if self.config.enable_confidence else None,
+                            bbox=[
+                                data['left'][i], 
+                                data['top'][i], 
+                                data['left'][i] + data['width'][i], 
+                                data['top'][i] + data['height'][i]
+                            ] if self.config.enable_coordinates else None
+                        )
+                        
+                        if result.confidence is None or result.confidence >= self.config.confidence_threshold:
+                            results.append(result)
+                
+                return results
+            else:
+                # Simple text extraction
+                text = pytesseract.image_to_string(
+                    image,
+                    lang="+".join(self.config.languages),
+                    config=self.tesseract_config
+                )
+                return [OCRResult(text=text)]
+                
         except Exception as e:
-            logger.warning(f"Memory check failed: {e}")
-            return "auto"
+            logger.error(f"Tesseract error: {e}")
+            return []
+
+
+class PaddleOCREngine(BaseOCREngine):
+    def __init__(self, config: OCRConfig):
+        super().__init__(config)
+        if not HAS_PADDLE:
+            raise ImportError("PaddleOCR not available")
+            
+        # Map language codes
+        lang_map = {
+            "deu": "german", 
+            "eng": "en",
+            "fra": "french",
+            "spa": "spanish",
+            "ita": "italian"
+        }
+        
+        paddle_lang = lang_map.get(self.config.languages[0], "en")
+        
+        # KORRIGIERT: Moderne PaddleOCR Parameter
+        self.ocr = PaddleOCR(
+            lang=paddle_lang,
+            use_textline_orientation=True,
+            text_recognition_model_dir=None,
+            text_detection_model_dir=None,
+            device="gpu" if torch.cuda.is_available() else "cpu"
+        )
+        
+    async def process(self, image_bytes: bytes) -> List[OCRResult]:
+        """Process with PaddleOCR - ULTRA-ROBUSTE VERSION"""
+        try:
+            # Convert to numpy array
+            image = Image.open(io.BytesIO(image_bytes))
+            img_array = np.array(image)
+            
+            result = self.ocr.predict(img_array)
+            
+            # ✅ ULTRA-ROBUSTE PRÜFUNG - verhindert ALLE "string index out of range" Fehler
+            if result is None:
+                logger.warning("PaddleOCR returned None")
+                return []
+                
+            if not isinstance(result, (list, tuple)):
+                logger.warning(f"PaddleOCR returned unexpected type: {type(result)}")
+                return []
+                
+            if len(result) == 0:
+                logger.warning("PaddleOCR returned empty result")
+                return []
+                
+            # Prüfe erste Seite
+            first_page = result[0]
+            if first_page is None:
+                logger.warning("PaddleOCR first page is None")
+                return []
+                
+            if not isinstance(first_page, (list, tuple)):
+                logger.warning(f"PaddleOCR first page unexpected type: {type(first_page)}")
+                return []
+                
+            if len(first_page) == 0:
+                logger.info("PaddleOCR found no text on page")
+                return []
+            
+            ocr_results = []
+            
+            # Iteriere über alle erkannten Textzeilen mit extra Sicherheit
+            for line_idx, line in enumerate(first_page):
+                try:
+                    # Umfassende Line-Validierung
+                    if line is None:
+                        continue
+                        
+                    if not isinstance(line, (list, tuple)):
+                        logger.debug(f"Line {line_idx} wrong type: {type(line)}")
+                        continue
+                        
+                    if len(line) < 2:
+                        logger.debug(f"Line {line_idx} too short: {len(line)}")
+                        continue
+                        
+                    bbox, text_info = line[0], line[1]
+                    
+                    # Text-Info Validierung
+                    if text_info is None:
+                        continue
+                        
+                    if not isinstance(text_info, (list, tuple)):
+                        logger.debug(f"Line {line_idx} text_info wrong type: {type(text_info)}")
+                        continue
+                        
+                    if len(text_info) < 2:
+                        logger.debug(f"Line {line_idx} text_info too short: {len(text_info)}")
+                        continue
+                        
+                    text, confidence = text_info[0], text_info[1]
+                    
+                    # Text-Validierung
+                    if text is None or text == "":
+                        continue
+                        
+                    if not isinstance(text, str):
+                        text = str(text)
+                        
+                    text = text.strip()
+                    if not text:
+                        continue
+                    
+                    # Confidence-Validierung
+                    if not isinstance(confidence, (int, float)):
+                        try:
+                            confidence = float(confidence)
+                        except (ValueError, TypeError):
+                            confidence = 0.0
+                    
+                    # Confidence-Schwelle prüfen
+                    if confidence < self.config.confidence_threshold:
+                        continue
+                    
+                    # BBox-Validierung (optional)
+                    processed_bbox = None
+                    if self.config.enable_coordinates and bbox is not None:
+                        try:
+                            if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                                processed_bbox = [
+                                    float(bbox[0][0]), float(bbox[0][1]),  # top-left
+                                    float(bbox[2][0]), float(bbox[2][1])   # bottom-right
+                                ]
+                        except (IndexError, TypeError, ValueError):
+                            logger.debug(f"Invalid bbox for line {line_idx}")
+                    
+                    # OCR-Result erstellen
+                    ocr_result = OCRResult(
+                        text=text,
+                        confidence=confidence if self.config.enable_confidence else None,
+                        bbox=processed_bbox
+                    )
+                    
+                    ocr_results.append(ocr_result)
+                        
+                except Exception as line_error:
+                    logger.debug(f"Error processing line {line_idx}: {line_error}")
+                    continue
+                    
+            if not ocr_results:
+                logger.info("No valid OCR results found after processing")
+                    
+            return ocr_results
+            
+        except Exception as e:
+            logger.error(f"PaddleOCR error: {e}")
+            logger.debug(f"Image shape: {img_array.shape if 'img_array' in locals() else 'No array'}")
+            return []
+
+
+class EasyOCREngine(BaseOCREngine):
+    """EasyOCR Engine - Easy to use, good accuracy"""
+    
+    def __init__(self, config: OCRConfig):
+        super().__init__(config)
+        if not HAS_EASYOCR:
+            raise ImportError("EasyOCR not available")
+            
+        # Map language codes
+        lang_map = {
+            "deu": "de",
+            "eng": "en",
+            "fra": "fr",
+            "spa": "es",
+            "ita": "it"
+        }
+        
+        easy_langs = [lang_map.get(lang, lang) for lang in self.config.languages]
+        
+        self.reader = easyocr.Reader(
+            easy_langs,
+            gpu=torch.cuda.is_available()
+        )
+        
+    async def process(self, image_bytes: bytes) -> List[OCRResult]:
+        """Process with EasyOCR"""
+        try:
+            # EasyOCR can work directly with bytes
+            result = self.reader.readtext(image_bytes)
+            
+            ocr_results = []
+            for (bbox, text, confidence) in result:
+                ocr_result = OCRResult(
+                    text=text,
+                    confidence=confidence if self.config.enable_confidence else None,
+                    bbox=[
+                        bbox[0][0], bbox[0][1],  # top-left
+                        bbox[2][0], bbox[2][1]   # bottom-right
+                    ] if self.config.enable_coordinates else None
+                )
+                
+                if confidence >= self.config.confidence_threshold:
+                    ocr_results.append(ocr_result)
+                    
+            return ocr_results
+            
+        except Exception as e:
+            logger.error(f"EasyOCR error: {e}")
+            return []
+
+
+class OCREngineManager:
+    """Manager für OCR Engines"""
+    
+    def __init__(self):
+        self.engines: Dict[OCREngine, BaseOCREngine] = {}
+        
+    def get_engine(self, engine_type: OCREngine, config: OCRConfig) -> BaseOCREngine:
+        """Get or create OCR engine"""
+        if engine_type == OCREngine.AUTO:
+            engine_type = self._select_best_engine()
+            
+        if engine_type not in self.engines:
+            if engine_type == OCREngine.TESSERACT:
+                self.engines[engine_type] = TesseractEngine(config)
+            elif engine_type == OCREngine.PADDLEOCR and HAS_PADDLE:
+                self.engines[engine_type] = PaddleOCREngine(config)
+            elif engine_type == OCREngine.EASYOCR and HAS_EASYOCR:
+                self.engines[engine_type] = EasyOCREngine(config)
+            else:
+                # Fallback to Tesseract
+                logger.warning(f"Engine {engine_type} not available, falling back to Tesseract")
+                self.engines[engine_type] = TesseractEngine(config)
+                
+        return self.engines[engine_type]
+    
+    def _select_best_engine(self) -> OCREngine:
+        """Select best available engine"""
+        try:
+            if HAS_PADDLE:
+                # Test mit einfachem Bild ob PaddleOCR funktioniert
+                test_ocr = PaddleOCR(
+                    lang='en', 
+                    use_textline_orientation=False,
+                    device="gpu" if torch.cuda.is_available() else "cpu"
+                )
+            return OCREngine.PADDLEOCR
+        except Exception as e:
+            logger.warning(f"PaddleOCR test failed: {e}")
+    
+    # Fallback zu anderen Engines...
+        return OCREngine.TESSERACT
+
+
+# === MAIN OCR AGENT CLASS ===
+
+class OCRAgentOptimizedV2:
+    """
+    Erweiterte OCR Agent Version mit intelligentem PDF-Handling und Multi-Engine Support
+    """
     
     def __init__(self, db_url: str):
         self.db_url = db_url
@@ -168,19 +547,18 @@ class OCRAgentOptimized:
         self.chunk_size = int(os.getenv("CHUNK_SIZE", "1000"))
         self.running = True
         
+        # OCR Engine Manager
+        self.ocr_manager = OCREngineManager()
+        
         # Size limits
         self.MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
         self.MAX_BASE64_LENGTH = 700 * 1024 * 1024  # 700MB string
         
-        # Tesseract configs
-        self.tesseract_config = "--oem 3 --psm 6"
-        self.tesseract_config_fast = "--oem 1 --psm 6"
-        
-        logger.info(f"📊 OCR Agent Optimized initialisiert:")
+        logger.info(f"📊 OCR Agent V2 initialisiert:")
         logger.info(f"   • Chunk-Größe: {self.chunk_size}")
         logger.info(f"   • Max File Size: {self.MAX_FILE_SIZE / (1024*1024):.0f}MB")
-        logger.info(f"   • DB URL: {db_url.split('@')[1] if '@' in db_url else 'localhost'}")
-
+        logger.info(f"   • Verfügbare Engines: {self._get_available_engines()}")
+        
         try:
             if torch.cuda.is_available():
                 gpu_count = torch.cuda.device_count()
@@ -190,6 +568,31 @@ class OCRAgentOptimized:
                 logger.warning("❌ No GPU available - running CPU only")
         except Exception as e:
             logger.warning(f"❌ GPU check failed: {e}")
+            
+    def _get_available_engines(self) -> List[str]:
+        """Get list of available OCR engines"""
+        engines = ["tesseract"]
+        if HAS_PADDLE:
+            engines.append("paddleocr")
+        if HAS_EASYOCR:
+            engines.append("easyocr")
+        return engines
+        
+    def check_memory_before_processing(self, file_size_mb: float) -> str:
+        """Check system memory and decide processing mode"""
+        try:
+            memory = psutil.virtual_memory()
+            available_gb = memory.available / (1024**3)
+            
+            logger.info(f"💾 Memory: {memory.percent:.1f}% used, {available_gb:.1f}GB available")
+            
+            if memory.percent > 80 or file_size_mb > 50:
+                logger.warning(f"⚠️ Memory pressure detected, forcing streaming mode")
+                return "streaming"
+            return "auto"
+        except Exception as e:
+            logger.warning(f"Memory check failed: {e}")
+            return "auto"
 
     async def connect(self):
         """Verbinde mit der PostgreSQL-Datenbank"""
@@ -306,11 +709,12 @@ class OCRAgentOptimized:
             file_type = file_type_mapping.get(file_type, file_type.split('/')[-1])
             
             metadata = self._parse_metadata_robust(doc.get("metadata", {}))
+            ocr_config = metadata.get_ocr_config()
             
-            # Log metadata for debugging
-            logger.debug(f"📋 Parsed metadata: file_content={bool(metadata.get_file_content())}, "
-                         f"file_path={metadata.get_file_path()}, "
-                         f"original_filename={metadata.get_original_filename()}")
+            # Log configuration
+            logger.debug(f"📋 OCR Config: engine={ocr_config.engine}, "
+                         f"languages={ocr_config.languages}, "
+                         f"extraction_mode={ocr_config.extraction_mode}")
             
             # Determine processing mode
             processing_mode = metadata.determine_processing_mode()
@@ -322,14 +726,14 @@ class OCRAgentOptimized:
             
             # Streaming mode
             if processing_mode == "streaming" and file_path:
-                return await self._extract_content_streaming(file_path, file_type, doc["original_name"])
+                return await self._extract_content_streaming(file_path, file_type, doc["original_name"], ocr_config)
             
             # In-memory mode
             file_bytes = await self._get_file_bytes(file_content, file_path)
             if not file_bytes:
                 raise ValueError("Keine Dateidaten gefunden")
                 
-            return await self._dispatch_extraction(file_type, file_bytes, doc["original_name"])
+            return await self._dispatch_extraction(file_type, file_bytes, doc["original_name"], ocr_config)
             
         except Exception as e:
             logger.error(f"❌ Content-Extraktion fehlgeschlagen: {e}")
@@ -338,7 +742,6 @@ class OCRAgentOptimized:
     def _parse_metadata_robust(self, raw_metadata: Union[str, dict]) -> DocumentMetadata:
         """Parse metadata to DocumentMetadata object"""
         try:
-            # Convert string to dict if necessary
             if isinstance(raw_metadata, str):
                 try:
                     metadata_dict = json.loads(raw_metadata)
@@ -350,15 +753,12 @@ class OCRAgentOptimized:
             else:
                 metadata_dict = {}
             
-            # Log what we got
             logger.debug(f"📋 Metadata keys: {list(metadata_dict.keys())}")
             
-            # Create DocumentMetadata with error handling
             try:
                 return DocumentMetadata(**metadata_dict)
             except Exception as e:
                 logger.warning(f"⚠️ DocumentMetadata validation failed: {e}")
-                # Return minimal valid metadata
                 return DocumentMetadata(
                     file_content=metadata_dict.get('file_content') or metadata_dict.get('fileContent'),
                     file_path=metadata_dict.get('file_path') or metadata_dict.get('filePath'),
@@ -374,7 +774,6 @@ class OCRAgentOptimized:
         """Get file bytes from content or path"""
         logger.debug(f"🔍 Suche Dateidaten - file_content: {bool(file_content)}, file_path: {file_path}")
         
-        # Try base64 content first
         if file_content:
             if self._validate_base64(file_content):
                 try:
@@ -383,7 +782,6 @@ class OCRAgentOptimized:
                 except Exception as e:
                     logger.warning(f"⚠️ Base64-Dekodierung fehlgeschlagen: {e}")
         
-        # Try file path
         if file_path and os.path.exists(file_path):
             try:
                 with open(file_path, "rb") as f:
@@ -391,7 +789,7 @@ class OCRAgentOptimized:
             except Exception as e:
                 logger.warning(f"⚠️ Datei-Lesen fehlgeschlagen: {e}")
         
-        logger.error(f"❌ Keine Dateidaten gefunden - content: {file_content[:50] if file_content else 'None'}, path: {file_path}")
+        logger.error(f"❌ Keine Dateidaten gefunden")
         return None
 
     def _validate_base64(self, content: str) -> bool:
@@ -399,18 +797,14 @@ class OCRAgentOptimized:
         if not content or not isinstance(content, str):
             return False
             
-        # Remove data URL prefix if present
         if content.startswith("data:"):
             content = content.split(",", 1)[-1] if "," in content else content
             
-        # Clean and check pattern
         cleaned = content.strip().replace('\n', '').replace(' ', '')
         
-        # Check base64 pattern
         if not re.match(r'^[A-Za-z0-9+/]*={0,2}$', cleaned):
             return False
             
-        # Try test decode
         try:
             test = cleaned[:1000] if len(cleaned) > 1000 else cleaned
             base64.b64decode(test + '=' * (4 - len(test) % 4))
@@ -420,20 +814,18 @@ class OCRAgentOptimized:
 
     def _clean_base64(self, content: str) -> str:
         """Clean base64 content"""
-        # Remove data URL prefix
         if content.startswith("data:") and "," in content:
             content = content.split(",", 1)[1]
         
-        # Remove whitespace
         return content.strip().replace('\n', '').replace(' ', '').replace('\r', '')
 
-    async def _dispatch_extraction(self, file_type: str, file_bytes: bytes, filename: str) -> List[Dict]:
+    async def _dispatch_extraction(self, file_type: str, file_bytes: bytes, filename: str, ocr_config: OCRConfig) -> List[Dict]:
         """Dispatch to specific extraction method"""
         try:
             if file_type == "pdf":
-                return await self.extract_pdf(file_bytes, filename)
+                return await self.extract_pdf_intelligent(file_bytes, filename, ocr_config)
             elif file_type in ["png", "jpg", "jpeg", "tiff", "tif"]:
-                return await self.extract_image(file_bytes)
+                return await self.extract_image(file_bytes, ocr_config)
             elif file_type in ["txt", "md", "log"]:
                 content = file_bytes.decode("utf-8", errors="ignore")
                 return self.extract_text(content, file_type)
@@ -449,7 +841,6 @@ class OCRAgentOptimized:
             elif file_type == "zip":
                 return await self.extract_archive(file_bytes)
             else:
-                # Default to text
                 content = file_bytes.decode("utf-8", errors="ignore")
                 return self.extract_text(content, file_type)
                 
@@ -457,66 +848,179 @@ class OCRAgentOptimized:
             logger.error(f"❌ Extraktion für {file_type} fehlgeschlagen: {e}")
             return [self._create_error_chunk(f"Extraktion fehlgeschlagen: {e}")]
 
-    # === EXTRACTION METHODS ===
+    # === INTELLIGENT PDF EXTRACTION ===
 
-    async def extract_pdf(self, pdf_bytes: bytes, filename: str) -> List[Dict]:
-        """Extract text from PDF"""
+    async def extract_pdf_intelligent(self, pdf_bytes: bytes, filename: str, ocr_config: OCRConfig) -> List[Dict]:
+        """Intelligente PDF-Extraktion mit PyMuPDF"""
         chunks = []
+        extraction_mode = ocr_config.extraction_mode
+        
         try:
-            images = pdf2image.convert_from_bytes(pdf_bytes, dpi=300)
-            logger.info(f"📄 PDF: {filename} ({len(images)} Seiten)")
+            # Open PDF with PyMuPDF
+            pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            total_pages = len(pdf_doc)
             
-            for page_num, image in enumerate(images, 1):
-                text = pytesseract.image_to_string(
-                    image,
-                    lang=os.getenv("TESSERACT_LANG", "deu+eng"),
-                    config=self.tesseract_config
-                )
+            logger.info(f"📄 PDF: {filename} ({total_pages} Seiten)")
+            logger.info(f"🔧 Extraction mode: {extraction_mode}")
+            
+            for page_num, page in enumerate(pdf_doc, 1):
+                if page_num % 10 == 0:
+                    logger.info(f"📄 Progress: {page_num}/{total_pages}")
                 
-                if text.strip():
-                    page_chunks = self.split_text(text)
-                    for chunk_text in page_chunks:
-                        chunks.append({
-                            "content": chunk_text,
-                            "type": "text",
-                            "page": page_num,
-                            "metadata": {
-                                "extraction_method": "pdf_ocr",
-                                "page_total": len(images)
+                # Determine extraction strategy
+                if extraction_mode == ExtractionMode.AUTO:
+                    # Check if page has text
+                    text = page.get_text().strip()
+                    if text:
+                        extraction_mode = ExtractionMode.HYBRID
+                    else:
+                        extraction_mode = ExtractionMode.OCR
+                
+                if extraction_mode in [ExtractionMode.NATIVE, ExtractionMode.HYBRID]:
+                    # Extract native text
+                    text = page.get_text()
+                    if text.strip():
+                        # Extract with layout preservation
+                        text_dict = page.get_text("dict")
+                        page_chunks = self._process_pdf_text_dict(text_dict, page_num, "pymupdf_native")
+                        chunks.extend(page_chunks)
+                        
+                        if extraction_mode == ExtractionMode.NATIVE:
+                            continue
+                
+                if extraction_mode in [ExtractionMode.OCR, ExtractionMode.HYBRID]:
+                    # OCR processing
+                    # Check for images in page
+                    image_list = page.get_images()
+                    
+                    if image_list or extraction_mode == ExtractionMode.OCR:
+                        # Render page as image
+                        mat = fitz.Matrix(ocr_config.dpi/72.0, ocr_config.dpi/72.0)
+                        pix = page.get_pixmap(matrix=mat)
+                        img_data = pix.tobytes("png")
+                        
+                        # Run OCR
+                        ocr_results = await self._run_ocr(img_data, ocr_config)
+                        
+                        for ocr_result in ocr_results:
+                            chunk = {
+                                "content": ocr_result.text,
+                                "type": "text",
+                                "page": page_num,
+                                "metadata": {
+                                    "extraction_method": f"ocr_{ocr_config.engine}",
+                                    "page_total": total_pages
+                                }
                             }
-                        })
+                            
+                            if ocr_result.confidence is not None:
+                                chunk["metadata"]["confidence"] = ocr_result.confidence
+                            if ocr_result.bbox is not None:
+                                chunk["metadata"]["bbox"] = ocr_result.bbox
+                                
+                            chunks.append(chunk)
+                        
+                        del pix
                 
                 # Memory cleanup
-                del image
                 if page_num % 5 == 0:
                     gc.collect()
-                    
+            
+            pdf_doc.close()
+            
         except Exception as e:
             logger.error(f"❌ PDF-Extraktion fehlgeschlagen: {e}")
             return [self._create_error_chunk(f"PDF-Fehler: {e}")]
             
         return chunks or [self._create_error_chunk("Kein Text aus PDF extrahiert")]
 
-    async def extract_image(self, image_bytes: bytes) -> List[Dict]:
-        """Extract text from image"""
-        try:
-            image = Image.open(io.BytesIO(image_bytes))
-            text = pytesseract.image_to_string(
-                image,
-                lang=os.getenv("TESSERACT_LANG", "deu+eng"),
-                config=self.tesseract_config
-            )
-            
-            if not text.strip():
-                return [{"content": "[Bild ohne Text]", "type": "image", "metadata": {}}]
+    def _process_pdf_text_dict(self, text_dict: dict, page_num: int, method: str) -> List[Dict]:
+        """Process PyMuPDF text dictionary to preserve structure"""
+        chunks = []
+        current_block = []
+        
+        for block in text_dict.get("blocks", []):
+            if block["type"] == 0:  # Text block
+                block_text = ""
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        block_text += span.get("text", "")
+                    block_text += "\n"
                 
-            chunks = self.split_text(text)
-            return [{
-                "content": chunk,
+                if block_text.strip():
+                    current_block.append(block_text)
+                    
+                    if len("\n".join(current_block)) > self.chunk_size:
+                        chunks.append({
+                            "content": "\n".join(current_block),
+                            "type": "text",
+                            "page": page_num,
+                            "metadata": {
+                                "extraction_method": method,
+                                "block_bbox": block["bbox"]
+                            }
+                        })
+                        current_block = []
+        
+        # Last block
+        if current_block:
+            chunks.append({
+                "content": "\n".join(current_block),
                 "type": "text",
-                "page": 1,
-                "metadata": {"extraction_method": "image_ocr"}
-            } for chunk in chunks]
+                "page": page_num,
+                "metadata": {"extraction_method": method}
+            })
+            
+        return chunks
+
+    async def _run_ocr(self, image_bytes: bytes, ocr_config: OCRConfig) -> List[OCRResult]:
+        """Run OCR with configured engine"""
+        try:
+            engine = self.ocr_manager.get_engine(ocr_config.engine, ocr_config)
+            results = await engine.process(image_bytes)
+            
+            # Combine results into text chunks if coordinates not needed
+            if not ocr_config.enable_coordinates and not ocr_config.enable_confidence:
+                combined_text = " ".join([r.text for r in results])
+                return [OCRResult(text=combined_text)]
+                
+            return results
+            
+        except Exception as e:
+            logger.error(f"OCR failed: {e}")
+            return []
+
+    # === OTHER EXTRACTION METHODS (Updated) ===
+
+    async def extract_image(self, image_bytes: bytes, ocr_config: OCRConfig) -> List[Dict]:
+        """Extract text from image with configured OCR engine"""
+        try:
+            ocr_results = await self._run_ocr(image_bytes, ocr_config)
+            
+            if not ocr_results:
+                return [{"content": "[Bild ohne Text]", "type": "image", "metadata": {}}]
+            
+            chunks = []
+            for ocr_result in ocr_results:
+                text_chunks = self.split_text(ocr_result.text)
+                for chunk in text_chunks:
+                    chunk_data = {
+                        "content": chunk,
+                        "type": "text",
+                        "page": 1,
+                        "metadata": {
+                            "extraction_method": f"image_ocr_{ocr_config.engine}"
+                        }
+                    }
+                    
+                    if ocr_result.confidence is not None:
+                        chunk_data["metadata"]["confidence"] = ocr_result.confidence
+                    if ocr_result.bbox is not None:
+                        chunk_data["metadata"]["bbox"] = ocr_result.bbox
+                        
+                    chunks.append(chunk_data)
+                    
+            return chunks
             
         except Exception as e:
             logger.error(f"❌ Bild-Extraktion fehlgeschlagen: {e}")
@@ -690,14 +1194,14 @@ class OCRAgentOptimized:
 
     # === STREAMING METHODS ===
 
-    async def _extract_content_streaming(self, file_path: str, file_type: str, filename: str) -> List[Dict]:
+    async def _extract_content_streaming(self, file_path: str, file_type: str, filename: str, ocr_config: OCRConfig) -> List[Dict]:
         """Streaming extraction for large files"""
         try:
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
             logger.info(f"🚀 Streaming für {filename}: {file_size_mb:.1f}MB")
             
             if file_type == "pdf":
-                return await self._stream_large_pdf(file_path)
+                return await self._stream_large_pdf(file_path, ocr_config)
             elif file_type in ["txt", "md", "log"]:
                 return await self._stream_large_text(file_path)
             elif file_type in ["docx", "doc"] and HAS_DOCX:
@@ -706,30 +1210,34 @@ class OCRAgentOptimized:
                 # Fallback to normal loading
                 with open(file_path, "rb") as f:
                     file_bytes = f.read()
-                return await self._dispatch_extraction(file_type, file_bytes, filename)
+                return await self._dispatch_extraction(file_type, file_bytes, filename, ocr_config)
                 
         except Exception as e:
             logger.error(f"❌ Streaming fehlgeschlagen: {e}")
             return [self._create_error_chunk(f"Streaming-Fehler: {e}")]
 
-    async def _stream_large_pdf(self, file_path: str) -> List[Dict]:
-        """Stream large PDF page by page"""
+    async def _stream_large_pdf(self, file_path: str, ocr_config: OCRConfig) -> List[Dict]:
+        """Stream large PDF with intelligent processing"""
         chunks = []
+        
         try:
+            pdf_doc = fitz.open(file_path)
+            total_pages = len(pdf_doc)
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            dpi = 150 if file_size_mb > 50 else 300
-            config = self.tesseract_config_fast if file_size_mb > 100 else self.tesseract_config
             
-            images = pdf2image.convert_from_path(file_path, dpi=dpi)
-            total_pages = len(images)
+            # Adjust quality for large files
+            if file_size_mb > 50:
+                ocr_config.dpi = 150
             
-            for page_num, image in enumerate(images, 1):
+            for page_num, page in enumerate(pdf_doc, 1):
                 if page_num % 10 == 0:
                     logger.info(f"📄 Progress: {page_num}/{total_pages}")
                 
-                text = pytesseract.image_to_string(image, lang="deu+eng", config=config)
+                # Try native extraction first
+                text = page.get_text()
                 
                 if text.strip():
+                    # Native text available
                     page_chunks = self.split_text(text)
                     for chunk in page_chunks:
                         chunks.append({
@@ -737,14 +1245,37 @@ class OCRAgentOptimized:
                             "type": "text",
                             "page": page_num,
                             "metadata": {
-                                "extraction_method": "pdf_streaming",
-                                "dpi": dpi
+                                "extraction_method": "pdf_streaming_native",
+                                "page_total": total_pages
                             }
                         })
+                else:
+                    # Need OCR
+                    mat = fitz.Matrix(ocr_config.dpi/72.0, ocr_config.dpi/72.0)
+                    pix = page.get_pixmap(matrix=mat)
+                    img_data = pix.tobytes("png")
+                    
+                    ocr_results = await self._run_ocr(img_data, ocr_config)
+                    
+                    for result in ocr_results:
+                        if result.text.strip():
+                            chunks.append({
+                                "content": result.text,
+                                "type": "text",
+                                "page": page_num,
+                                "metadata": {
+                                    "extraction_method": f"pdf_streaming_ocr_{ocr_config.engine}",
+                                    "dpi": ocr_config.dpi
+                                }
+                            })
+                    
+                    del pix
                 
-                del image
+                # Memory cleanup
                 if page_num % 5 == 0:
                     gc.collect()
+                    
+            pdf_doc.close()
                     
         except Exception as e:
             logger.error(f"❌ PDF-Streaming fehlgeschlagen: {e}")
@@ -912,7 +1443,7 @@ class OCRAgentOptimized:
     async def run(self):
         """Main run loop"""
         await self.connect()
-        logger.info("🧠 OCR Agent Optimized gestartet")
+        logger.info("🧠 OCR Agent V2 gestartet")
         
         try:
             await self.process_queue()
@@ -925,6 +1456,13 @@ class OCRAgentOptimized:
             await self.close()
 
 
+# Import numpy for PaddleOCR
+try:
+    import numpy as np
+except ImportError:
+    logger.warning("numpy not available - required for PaddleOCR")
+
+
 def main():
     """Main entry point"""
     db_url = os.getenv(
@@ -932,7 +1470,7 @@ def main():
         "postgresql://semanticuser:semantic2024@postgres:5432/semantic_doc_finder"
     )
     
-    agent = OCRAgentOptimized(db_url)
+    agent = OCRAgentOptimizedV2(db_url)
     asyncio.run(agent.run())
 
 

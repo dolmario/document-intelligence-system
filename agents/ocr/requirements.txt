@@ -1,24 +1,36 @@
-# Core dependencies
-asyncpg==0.29.0
-pytesseract==0.3.10
-Pillow==10.1.0
-pdf2image==1.16.3
-aiofiles==23.2.1
-beautifulsoup4==4.12.2
+# Core Dependencies (bestehend)
+asyncpg>=0.29.0
+pydantic>=2.5.0
 
-# WICHTIG: Pydantic hinzufügen!
-pydantic==2.5.0
+# OCR & PDF (V2 Features)
+pytesseract>=0.3.10
+Pillow>=10.1.0
+pdf2image>=1.16.3
+PyMuPDF>=1.23.0
+numpy>=1.24.3
 
-# Memory monitoring
-psutil==5.9.6
+# OpenCV für OCR Engines
+opencv-python>=4.8.0
 
-# GPU support (Standard PyTorch)
-torch==2.1.0
-torchvision==0.16.0
+# GPU-ready PyTorch (automatischer CPU fallback)
+torch>=2.1.0
+torchvision>=0.16.0
 
-# Optional dependencies
-python-docx==1.1.0
-numpy==1.24.3
-pandas==2.0.3
-openpyxl==3.1.2
-lxml==4.9.3
+# Multi-Engine OCR (GPU-optimiert, CPU fallback)
+# PaddlePaddle Framework (erforderlich für PaddleOCR)
+paddlepaddle>=2.5.0
+paddleocr>=2.7.0
+easyocr>=1.7.0
+
+# DOCX Support
+python-docx>=0.8.11
+
+# System Monitoring
+psutil>=5.9.6
+
+# Basis Tools
+python-dateutil>=2.8.2
+
+# OCR Engine Dependencies
+shapely>=2.0.0
+scikit-image>=0.21.0
