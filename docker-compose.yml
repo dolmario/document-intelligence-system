@@ -9,6 +9,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-semanticuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-semantic2024}
       POSTGRES_DB: ${POSTGRES_DB:-semantic_doc_finder}
+      # Robustere PostgreSQL Settings
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      POSTGRES_HOST_AUTH_METHOD: "md5"
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -17,10 +20,11 @@ services:
     networks:
       - semantic_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-semanticuser} -d ${POSTGRES_DB:-semantic_doc_finder}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-semanticuser} -d ${POSTGRES_DB:-semantic_doc_finder} && psql -U ${POSTGRES_USER:-semanticuser} -d ${POSTGRES_DB:-semantic_doc_finder} -c 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -38,8 +42,10 @@ services:
     environment:
       OLLAMA_KEEP_ALIVE: 24h
       OLLAMA_HOST: 0.0.0.0
-      OLLAMA_MAX_LOADED_MODELS: 3
+      OLLAMA_MAX_LOADED_MODELS: 2        # Genau 2 Modelle parallel
       OLLAMA_NUM_PARALLEL: 2
+      SEARCH_MODEL: gemma2:2b            # Für Search (1.5GB)
+      DEFAULT_MODEL: mistral             # Für Enhancement (4.5GB)
     volumes:
       - ${OLLAMA_DATA_PATH:-./ollama_data}:/root/.ollama
     networks:
@@ -47,9 +53,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3g
+          memory: 8g                     # Reicht für beide Modelle!
         reservations:
-          memory: 1g
+          memory: 2g
           devices:
             - driver: nvidia
               count: all
@@ -99,6 +105,7 @@ services:
       QDRANT_URL: ${QDRANT_URL:-}
       OLLAMA_URL: http://semantic-doc-finder-ollama:11434
       DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
+      SEARCH_MODEL: ${SEARCH_MODEL:-gemma2:2b}  # Neues Search-Modell
       PYTHONUNBUFFERED: 1
     depends_on:
       postgres:
@@ -113,7 +120,7 @@ services:
           memory: 1g
         reservations:
           memory: 256m
-    restart: unless-stopped
+    restart: on-failure:3  # Restart bei Fehlern, max 3 Versuche
 
   # === WORKFLOW LAYER ===
   n8n:
@@ -139,6 +146,7 @@ services:
       GENERIC_TIMEZONE: ${TZ:-Europe/Berlin}
       OLLAMA_URL: http://semantic-doc-finder-ollama:11434
       DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
+      SEARCH_MODEL: ${SEARCH_MODEL:-gemma2:2b}  # Für N8N Search Enhancement
     volumes:
       - ${N8N_DATA_PATH:-./n8n_data}:/home/node/.n8n
       - ./n8n/workflows:/workflows
@@ -201,8 +209,10 @@ services:
     networks:
       - semantic_network
     depends_on:
-      - ollama
-      - search_api
+      search_api:
+        condition: service_started
+      ollama:
+        condition: service_started
     deploy:
       resources:
         limits:
