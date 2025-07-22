@@ -134,26 +134,30 @@ async def get_embedding(text: str) -> List[float]:
 # === STARTUP/SHUTDOWN ===
 
 # services/search/api.py - FINAL VERSION
-# Erweitere die startup_event Funktion in der bestehenden API
 
 async def startup_event():
-    global db_pool, qdrant_client
+    global db_pool
     
     db_url = os.getenv('DATABASE_URL')
     if not db_url:
         raise RuntimeError("DATABASE_URL environment variable is not set")
     
     logger.info(f"Connecting to database...")
-    max_retries = 5
+    max_retries = 30  # Erhöht von 5 auf 30
     for attempt in range(max_retries):
         try:
-            db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=20)
+            db_pool = await asyncpg.create_pool(
+                db_url, 
+                min_size=2, 
+                max_size=20,
+                timeout=60  # 60s timeout statt default
+            )
             logger.info("✅ Database connection established")
             break
         except Exception as e:
             logger.warning(f"Database connection attempt {attempt+1}/{max_retries} failed: {str(e)}")
             if attempt < max_retries - 1:
-                await asyncio.sleep(2)
+                await asyncio.sleep(10)  # 10s statt 2s warten
             else:
                 raise
     
