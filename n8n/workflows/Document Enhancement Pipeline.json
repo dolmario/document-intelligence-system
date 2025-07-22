@@ -17,7 +17,7 @@
       "typeVersion": 1,
       "position": [
         -1808,
-        -96
+        32
       ]
     },
     {
@@ -31,7 +31,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        -1520,
+        -1584,
         -64
       ],
       "credentials": {
@@ -57,8 +57,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        -1360,
-        -96
+        -1136,
+        -64
       ]
     },
     {
@@ -72,8 +72,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        -1136,
-        -208
+        -912,
+        -160
       ],
       "credentials": {
         "postgres": {
@@ -85,7 +85,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- Get chunks that need enhancement for THIS document\nSELECT \n  c.id as chunk_id,\n  c.document_id,\n  c.content,\n  c.content_type,\n  c.page_number,\n  c.chunk_index,\n  c.metadata,\n  d.original_name\nFROM chunks c\nJOIN documents d ON c.document_id = d.id\nWHERE c.document_id = '{{ $('Get Enhancement Tasks').item.json.document_id }}'::uuid\n  AND c.status IN ('processed', 'raw')\n  AND NOT EXISTS (\n    SELECT 1 FROM enhanced_chunks ec \n    WHERE ec.original_chunk_id = c.id\n  )\n  AND LENGTH(c.content) > 50\nORDER BY c.chunk_index ASC\nLIMIT 5;",
+        "query": "SELECT\n    id AS chunk_id,\n    document_id,\n    content,\n    content_type,\n    chunk_index,\n    page_number,\n    (SELECT original_name FROM documents WHERE id = chunks.document_id) AS original_name,\n    metadata\nFROM chunks\nWHERE status = 'raw';\n",
         "options": {}
       },
       "id": "0b3ecf34-1e0e-4882-b372-9bef490e64af",
@@ -93,8 +93,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        -928,
-        -208
+        -688,
+        -160
       ],
       "credentials": {
         "postgres": {
@@ -105,21 +105,21 @@
     },
     {
       "parameters": {
-        "jsCode": "const chunk = $input.first().json;\nconst task = $('Get Enhancement Tasks1').first().json;\nconsole.log(`Processing chunk ${chunk.chunk_id} from ${chunk.original_name}`);\nconst content = chunk.content || '';\nconst contentType = chunk.content_type || 'text';\n// Generate enhancement prompt based on content type\nlet enhancementPrompt = '';\nif (contentType === 'table' || content.includes('|') || /\\t.*\\t/.test(content)) {\n  enhancementPrompt = `Improve this table data:\\n\\n\"${content}\"\\n\\nTasks:\\n1. Fix OCR errors in table structure\\n2. Standardize formatting\\n3. Preserve all numerical data exactly\\n4. Improve readability\\n\\nReturn ONLY the improved table content.`;\n} else {\n  enhancementPrompt = `Improve this text:\\n\\n\"${content}\"\\n\\nTasks:\\n1. Fix OCR errors and typos\\n2. Improve grammar and sentence structure\\n3. Preserve all factual information\\n4. Use professional language\\n5. Keep the same length approximately\\n\\nReturn ONLY the improved text.`;\n}\n// Generate categorization prompt\nconst categorizationPrompt = `Extract metadata from this content:\\n\\n\"${content.substring(0, 800)}...\"\\n\\nRespond in JSON format:\\n{\\n  \\\"categories\\\": [\\\"category1\\\", \\\"category2\\\"],\\n  \\\"key_topics\\\": [\\\"topic1\\\", \\\"topic2\\\", \\\"topic3\\\"],\\n  \\\"extracted_metadata\\\": {\\n    \\\"keywords\\\": [\\\"keyword1\\\", \\\"keyword2\\\"],\\n    \\\"entities\\\": [\\\"entity1\\\", \\\"entity2\\\"],\\n    \\\"summary\\\": \\\"brief summary\\\",\\n    \\\"document_type\\\": \\\"type\\\"\n  },\n  \"detected_references\": [\"ref1\", \"ref2\"],\n  \"business_relevance\": \"high|medium|low\"\n}\";\nreturn [{\n  chunk_id: chunk.chunk_id,\n  document_id: chunk.document_id,\n  original_content: content,\n  content_type: contentType,\n  chunk_index: chunk.chunk_index,\n  page_number: chunk.page_number,\n  original_name: chunk.original_name,\n  enhancement_prompt: enhancementPrompt,\n  categorization_prompt: categorizationPrompt,\n  processing_start: new Date().toISOString(),\n  queue_id: task.queue_id\n}];"
+        "jsCode": "// =================================================================\n// PREPARE LLM PROCESSING - SYNTAX CORRECTED\n// =================================================================\n\nconst chunk = $input.first().json;\nconst task = $('Get Enhancement Tasks1').first().json;\n\nconsole.log(`Processing chunk ${chunk.chunk_id} from ${chunk.original_name}`);\n\nconst content = chunk.content || '';\nconst contentType = chunk.content_type || 'text';\n\n// Generate enhancement prompt based on content type\nlet enhancementPrompt = '';\nif (contentType === 'table' || content.includes('|') || /\\t.*\\t/.test(content)) {\n  enhancementPrompt = `Improve this table data:\n\n\"${content}\"\n\nTasks:\n1. Fix OCR errors in table structure\n2. Standardize formatting\n3. Preserve all numerical data exactly\n4. Improve readability\n\nReturn ONLY the improved table content.`;\n} else {\n  enhancementPrompt = `Improve this text:\n\n\"${content}\"\n\nTasks:\n1. Fix OCR errors and typos\n2. Improve grammar and sentence structure\n3. Preserve all factual information\n4. Use professional language\n5. Keep the same length approximately\n\nReturn ONLY the improved text.`;\n}\n\n// Generate categorization prompt (FIX: Proper string concatenation)\nconst categorizationPrompt = `Extract metadata from this content:\n\n\"${content.substring(0, 800)}...\"\n\nRespond in JSON format:\n{\n  \"categories\": [\"category1\", \"category2\"],\n  \"key_topics\": [\"topic1\", \"topic2\", \"topic3\"],\n  \"extracted_metadata\": {\n    \"keywords\": [\"keyword1\", \"keyword2\"],\n    \"entities\": [\"entity1\", \"entity2\"],\n    \"summary\": \"brief summary\",\n    \"document_type\": \"type\"\n  },\n  \"detected_references\": [\"ref1\", \"ref2\"],\n  \"business_relevance\": \"high|medium|low\"\n}`;\n\nreturn [{\n  chunk_id: chunk.chunk_id,\n  document_id: chunk.document_id,\n  original_content: content,\n  content_type: contentType,\n  chunk_index: chunk.chunk_index,\n  page_number: chunk.page_number,\n  original_name: chunk.original_name,\n  enhancement_prompt: enhancementPrompt,\n  categorization_prompt: categorizationPrompt,\n  processing_start: new Date().toISOString(),\n  queue_id: task.queue_id\n}];"
       },
       "id": "5b5a8023-d415-4cbe-9ac5-5b48b8c8ace6",
       "name": "Prepare LLM Processing1",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -704,
-        -208
+        -240,
+        -160
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://ollama:11434/api/generate",
+        "url": "http://semantic-doc-finder-ollama:11434/api/generate",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -151,14 +151,14 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 3,
       "position": [
-        -480,
-        -304
+        -16,
+        -256
       ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://ollama:11434/api/generate",
+        "url": "http://semantic-doc-finder-ollama:11434/api/generate",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -190,8 +190,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 3,
       "position": [
-        -480,
-        -96
+        -16,
+        -64
       ]
     },
     {
@@ -203,8 +203,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -256,
-        -208
+        368,
+        -160
       ]
     },
     {
@@ -218,8 +218,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        -48,
-        -208
+        528,
+        -160
       ],
       "credentials": {
         "postgres": {
@@ -231,7 +231,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- Check if all chunks for this document are enhanced\nWITH document_stats AS (\n  SELECT \n    COUNT(c.id) as total_chunks,\n    COUNT(ec.id) as enhanced_chunks\n  FROM chunks c\n  LEFT JOIN enhanced_chunks ec ON c.id = ec.original_chunk_id\n  WHERE c.document_id = '{{ $('Combine Results').item.json.document_id }}'::uuid\n    AND c.status NOT IN ('archived', 'deleted')\n)\nSELECT \n  CASE \n    WHEN enhanced_chunks >= total_chunks THEN 'completed'\n    ELSE 'processing'\n  END as task_status,\n  total_chunks,\n  enhanced_chunks\nFROM document_stats;",
+        "query": "-- Check if all chunks for this document are enhanced\nWITH document_stats AS (\n  SELECT \n    COUNT(c.id) as total_chunks,\n    COUNT(ec.id) as enhanced_chunks\n  FROM chunks c\n  LEFT JOIN enhanced_chunks ec ON c.id = ec.original_chunk_id\n  WHERE c.document_id = '{{ $('Combine Results1').item.json.document_id }}'::uuid\n    AND c.status NOT IN ('archived', 'deleted')\n)\nSELECT \n  CASE \n    WHEN enhanced_chunks >= total_chunks THEN 'completed'\n    ELSE 'processing'\n  END as task_status,\n  total_chunks,\n  enhanced_chunks\nFROM document_stats;",
         "options": {}
       },
       "id": "e94b438c-cbf9-4fd8-816e-ad581deb1cef",
@@ -239,8 +239,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        176,
-        -208
+        880,
+        -160
       ],
       "credentials": {
         "postgres": {
@@ -260,8 +260,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2,
       "position": [
-        400,
-        -208
+        1104,
+        -160
       ],
       "credentials": {
         "postgres": {
@@ -279,8 +279,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        624,
-        -208
+        1328,
+        -160
       ]
     },
     {
@@ -292,8 +292,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1136,
-        0
+        -912,
+        32
       ]
     },
     {
@@ -305,8 +305,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1632,
-        96
+        -1584,
+        128
       ]
     },
     {
@@ -316,11 +316,58 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1328,
-        -288
+        -1360,
+        -64
       ],
       "id": "559a4e6f-712a-4ffb-a2b0-56526978c2d0",
       "name": "Code1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.all();\nconst chunks = [];\n\nfor (let i = 0; i < input.length; i++) {\n    const item = input[i];\n    const chunk = item.json;\n\n    if (chunk && chunk.chunk_id) {\n        chunks.push({\n            json: {\n                chunk_id: chunk.chunk_id,\n                document_id: chunk.document_id,\n                content: chunk.content,\n                content_type: chunk.content_type,\n                chunk_index: chunk.chunk_index,\n                page_number: chunk.page_number,\n                original_name: chunk.original_name,\n                metadata: chunk.metadata\n            }\n        });\n    } else {\n        console.log(`❌ Invalid chunk at index ${i}`, JSON.stringify(chunk, null, 2));\n    }\n}\n\nreturn chunks;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        -160
+      ],
+      "id": "29fc9039-1f97-4a70-b5d4-f5ef1696e564",
+      "name": "Code2"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        208,
+        -160
+      ],
+      "id": "dbb4b693-35c9-4ecc-bad5-ae0b9c79df2a",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM chunks\nWHERE id = '{{ $(\"Combine Results1\").item.json.chunk_id }}'\n  AND '{{ $(\"Combine Results1\").item.json.manual_review_needed }}'::boolean = false;\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        720,
+        -160
+      ],
+      "id": "ec377e25-0fa2-44ea-9ede-0266e3eda086",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "YodbkFWc2fWtqLl3",
+          "name": "Postgres account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -385,7 +432,7 @@
       "main": [
         [
           {
-            "node": "Prepare LLM Processing1",
+            "node": "Code2",
             "type": "main",
             "index": 0
           }
@@ -412,7 +459,7 @@
       "main": [
         [
           {
-            "node": "Combine Results1",
+            "node": "Merge",
             "type": "main",
             "index": 0
           }
@@ -423,9 +470,9 @@
       "main": [
         [
           {
-            "node": "Combine Results1",
+            "node": "Merge",
             "type": "main",
-            "index": 0
+            "index": 1
           }
         ]
       ]
@@ -445,7 +492,7 @@
       "main": [
         [
           {
-            "node": "Check Completion1",
+            "node": "Execute a SQL query",
             "type": "main",
             "index": 0
           }
@@ -484,13 +531,46 @@
           }
         ]
       ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "Prepare LLM Processing1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Combine Results1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Check Completion1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "3d5fcea9-ee02-43fc-ac58-08b95ab8fb3c",
+  "versionId": "73ea3c58-0735-4446-a7ff-5f68c2ccd6e8",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "ea5d82e8e516069c37d2848a89101cd5249268f1ee9ad27e6599d64c520de1dd"
