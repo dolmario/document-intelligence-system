@@ -29,26 +29,6 @@ services:
           memory: 512m
     restart: unless-stopped
 
-  # === VECTOR DATABASE (Optional - aktuell nicht aktiv genutzt) ===
-  # qdrant:
-  #   image: qdrant/qdrant
-  #   container_name: semantic-doc-finder-qdrant
-  #   ports:
-  #     - "${QDRANT_PORT:-6333}:6333"
-  #   volumes:
-  #     - ${QDRANT_DATA_PATH:-./qdrant_data}:/qdrant/storage
-  #   networks:
-  #     - semantic_network
-  #   environment:
-  #     QDRANT__SERVICE__GRPC_PORT: 6334
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         memory: 1g
-  #       reservations:
-  #         memory: 256m
-  #   restart: unless-stopped
-
   # === LLM LAYER ===
   ollama:
     image: ollama/ollama:latest
@@ -80,16 +60,16 @@ services:
   ocr_agent:
     build:
       context: .
-      dockerfile: agents/ocr/Dockerfile.v2
+      dockerfile: agents/ocr/Dockerfile
     container_name: semantic-doc-finder-ocr
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-semanticuser}:${POSTGRES_PASSWORD:-semantic2024}@postgres:5432/${POSTGRES_DB:-semantic_doc_finder}
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+      TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
+      PYTHONUNBUFFERED: 1
     volumes:
       - ${DOCUMENTS_PATH:-./data}:/data:ro
       - ${LOGS_PATH:-./logs}:/app/logs
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-semanticuser}:${POSTGRES_PASSWORD:-semantic2024}@postgres:5432/${POSTGRES_DB:-semantic_doc_finder}
-      TESSERACT_LANG: ${TESSERACT_LANG:-deu+eng}
-      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
-      PYTHONUNBUFFERED: 1
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,9 +78,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
+          memory: 6g
         reservations:
-          memory: 512m
+          memory: 2g
           devices:
             - driver: nvidia
               count: all
@@ -110,13 +90,13 @@ services:
   search_api:
     build:
       context: .
-      dockerfile: services/search/Dockerfile.v2
+      dockerfile: services/search/Dockerfile
     container_name: semantic-doc-finder-search-api
     ports:
       - "${SEARCH_API_PORT:-8001}:8001"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-semanticuser}:${POSTGRES_PASSWORD:-semantic2024}@postgres:5432/${POSTGRES_DB:-semantic_doc_finder}
-      QDRANT_URL: ${QDRANT_URL:-}  # Optional - leer lassen wenn nicht gewünscht
+      QDRANT_URL: ${QDRANT_URL:-}
       OLLAMA_URL: http://semantic-doc-finder-ollama:11434
       DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
       PYTHONUNBUFFERED: 1
@@ -215,8 +195,6 @@ services:
       
       # Custom Models Integration
       ENABLE_MODEL_FILTER: false
-      # MODEL_FILTER_LIST: "mistral;document-search-enhanced"
-      
     volumes:
       - ${WEBUI_DATA_PATH:-./open_webui_data}:/app/backend/data
       - ${DOCUMENTS_PATH:-./data}:/app/uploads:ro
