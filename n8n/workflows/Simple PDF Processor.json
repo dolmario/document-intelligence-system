@@ -6,57 +6,37 @@
         "triggerTimes": {
           "item": [
             {
-              "mode": "everyMinute"
+              "mode": "everyHour"
             }
           ]
         }
       },
-      "id": "0ac0c1ea-5311-43ef-a2c0-29c3e8d3d60d",
+      "id": "6aa91c75-bdfe-4e9b-b62d-0dd122fb91d6",
       "name": "Scan Trigger",
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
       "position": [
-        -2272,
-        -184
+        -2224,
+        240
       ]
     },
     {
       "parameters": {
-        "conditions": {
-          "number": [
-            {
-              "value1": "={{$json.processing_status}}  \n",
-              "operation": "equal"
-            }
-          ]
-        }
+        "jsCode": "// Prepare Upload – Code Node\n// Arbeite nur mit verfügbaren Daten + Error‑Handling\nconsole.log('=== PREPARE UPLOAD SIMPLE ===');\nconsole.log('Available inputs:', $input.all().length);\n\nconst inputData = $input.all()[0].json;\nconsole.log('Input data:', JSON.stringify(inputData, null, 2));\n\n// Fallback-Daten wenn nichts da ist\nconst fileName = inputData.fileName ||\n                 inputData.original_name ||\n                 `auto_file_${Date.now()}.pdf`;\n\nconst filePath = inputData.filePath ||\n                 inputData.file_path ||\n                 `/data/${fileName}`;\n\nconsole.log(`📄 Processing: ${fileName}`);\n\n// Gib hier komplett das JSON-Objekt zurück, inklusive beider Varianten\nreturn [{\n  json: {\n    fileName: fileName,\n    fileType: \"pdf\",  // Falls dein Workflow noch Probleme hat, kannst du das hier hart coden\n    metadata: {\n      // beide Varianten befüllen, damit der OCR-Agent sie findet\n      file_path: filePath,\n      filePath:  filePath,\n\n      source: 'auto_folder_scan',\n      uploadedAt: new Date().toISOString(),\n      original_filename: fileName,\n      processed: false,\n      auto_discovered: true,\n      workflow_issue: \"filename_lost_in_chain\"  // Debug marker\n    }\n  }\n}];\n"
       },
-      "id": "d3a22556-5343-4a93-8a05-bb8fadc13aec",
-      "name": "Is New File?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
-      "position": [
-        -704,
-        -256
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Arbeite nur mit verfügbaren Daten + Error-Handling\nconsole.log('=== PREPARE UPLOAD SIMPLE ===');\nconsole.log('Available inputs:', $input.all().length);\n\nconst inputData = $input.all()[0].json;\nconsole.log('Input data:', JSON.stringify(inputData, null, 2));\n\n// Fallback-Daten wenn nichts da ist\nconst fileName = inputData.fileName || \n                 inputData.original_name || \n                 `auto_file_${Date.now()}.pdf`;\n                 \nconst filePath = inputData.filePath || \n                 inputData.file_path || \n                 `/data/${fileName}`;\n\nconsole.log(`📄 Processing: ${fileName}`);\n\nreturn [{\n  json: {\n    fileName: fileName,\n    fileType: \"pdf\", // Fallback bis Workflow gefixt\n    metadata: {\n      file_path: filePath,\n      source: 'auto_folder_scan',\n      uploadedAt: new Date().toISOString(),\n      original_filename: fileName,\n      processed: false,\n      auto_discovered: true,\n      workflow_issue: \"filename_lost_in_chain\" // Debug marker\n    }\n  }\n}];"
-      },
-      "id": "1409c5e9-eb49-406a-88d8-2b90d658dca7",
+      "id": "03ba63dd-7fed-4b7f-9462-24ba0ea73a2a",
       "name": "Prepare Upload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -256,
-        -88
+        -432,
+        240
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH new_doc AS (\n  INSERT INTO documents (\n    source_id, \n    original_name, \n    file_type, \n    metadata\n  )\n  VALUES (\n    (SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1),\n    $1::text,  -- fileName\n    $2::text,  -- fileType  \n    $3::jsonb  -- metadata\n  )\n  RETURNING id\n)\nINSERT INTO processing_queue (document_id, task_type, priority)\nSELECT id, 'extract', 8 FROM new_doc\nRETURNING id as document_id;",
+        "query": "WITH new_doc AS (\n  INSERT INTO documents (\n    source_id, \n    original_name, \n    file_type, \n    metadata\n  )\n  VALUES (\n    (SELECT id FROM sources WHERE name = 'n8n_upload' LIMIT 1),\n    $1::text,  -- fileName\n    $2::text,  -- fileType  \n    $3::jsonb  -- metadata\n  )\n  RETURNING id\n)\nINSERT INTO processing_queue (document_id, task_type, priority)\nSELECT id, 'extract', 8 FROM new_doc\nRETURNING id as document_id;\n\n",
         "options": {
           "queryReplacement": "=[\n  {\n    \"name\": \"$1\",\n    \"value\": \"={{ $json.fileName }}\"\n  },\n  {\n    \"name\": \"$2\",\n    \"value\": \"={{ $json.fileType }}\"\n  },\n  {\n    \"name\": \"$3\",\n    \"value\": \"={{ JSON.stringify($json.metadata) }}\"\n  }\n]\n"
         }
@@ -64,10 +44,10 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -32,
-        -88
+        -208,
+        240
       ],
-      "id": "6af85575-2924-40b4-8d03-ff464e30f5d8",
+      "id": "caf82338-1cc1-4f9d-8c59-6da3acdeb804",
       "name": "Create Document",
       "credentials": {
         "postgres": {
@@ -80,53 +60,40 @@
       "parameters": {
         "jsCode": "// Log successful processing\nconst uploadData = $('Prepare Upload').item.json;\nconst result = $input.first().json;\n\nconsole.log('=== PDF AUTO-SCAN SUCCESS ===');\nconsole.log('📄 File:', uploadData.fileName);\nconsole.log('🆔 Document ID:', result.document_id);\nconsole.log('🚀 Status: Queued for OCR');\nconsole.log('==============================');\n\nreturn [{\n  json: {\n    fileName: uploadData.fileName,\n    documentId: result.document_id,\n    status: 'success',\n    message: `${uploadData.fileName} erfolgreich eingereiht`,\n  }\n}];\n"
       },
-      "id": "ebee9fbf-a841-4696-9029-84534ad698b9",
+      "id": "3d5450ad-e3f3-4f5b-bc26-1a6cfef20265",
       "name": "Log Success",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        192,
-        -88
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const fileInfo = $input.first().json;\n\nif (!fileInfo.exists) {\n  return [{ json: { shouldProcess: true } }]; // ✅ Dummy-Output\n}\n\n\n// ✅ Datei existiert → skip loggen\nconsole.log(`⏭️ Überspringe bereits verarbeitete Datei: ${fileInfo.fileName}`);\n\nreturn [{\n  json: {\n    fileName: fileInfo.fileName,\n    status: 'skipped',\n    reason: 'already_exists',\n  }\n}];\n\n"
-      },
-      "id": "a5078f98-bcd1-48fd-992f-93b34f6cb88f",
-      "name": "Log Skipped",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        -480,
-        -304
+        16,
+        240
       ]
     },
     {
       "parameters": {
         "executeOnce": false,
-        "command": "=#!/bin/bash\nset -euo pipefail\n\n# 1) Input und Output\nINPUT_FILE=\"{{ $json.filePath }}\"\nOUTPUT_DIR=\"/tmp/base64_parts\"\nmkdir -p \"$OUTPUT_DIR\"\n\n# 2) Splitte in 12 MB‑Blöcke (mit numerischen Suffixen, sauber für Leerzeichen)\nsplit -b 12m -d --suffix-length=4 \"$INPUT_FILE\" \\\n      \"$OUTPUT_DIR/part_\"\n\n# 3) Base64‑Kodierung der Splits\nfor part in \"$OUTPUT_DIR\"/part_*; do\n  # Prüfen: ist es eine Datei?\n  [ -f \"$part\" ] || continue\n  OUT_FILE=\"${part}.b64\"\n  base64 -w 0 \"$part\" > \"$OUT_FILE\"\n  echo \"$OUT_FILE\"\ndone\n\n\n\n"
+        "command": "==#!/bin/bash\nset -eo pipefail\n\n# Inline-Templating mit n8n\nFILE_NAME=\"{{ $json.fileName }}\"\nFILE_HASH=\"{{ $json.fileHash }}\"\nFILE_SIZE=\"{{ $json.fileSize }}\"\n\nINPUT_FILE=\"{{ $json.filePath }}\"\nOUTPUT_DIR=\"/tmp/base64_parts_$(date +%s)\"\n\nmkdir -p \"$OUTPUT_DIR\"\n\n# Split in 12 MB-Stücke\nsplit -b 12m -a 4 \"$INPUT_FILE\" \"$OUTPUT_DIR/part_\"\n\n# Für jedes Teil eine reine JSON-Zeile ausgeben\nfor part in \"$OUTPUT_DIR\"/part_*; do\n  if [ -f \"$part\" ]; then\n    out=\"${part}.b64\"\n    base64 -w 0 \"$part\" > \"$out\"\n    printf '{\"fileName\":\"%s\",\"fileHash\":\"%s\",\"fileSize\":%s,\"chunkPath\":\"%s\"}\\n' \\\n      \"$FILE_NAME\" \"$FILE_HASH\" \"$FILE_SIZE\" \"$out\"\n    rm \"$part\"\n  fi\ndone\n"
       },
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [
-        -1152,
-        -184
+        -1104,
+        312
       ],
-      "id": "9abab652-c2fc-497a-8b34-b799dd96e90a",
+      "id": "ce69eff2-050c-4f6c-bacf-cca2dcd7aa1e",
       "name": "Execute Command4"
     },
     {
       "parameters": {
-        "command": "=find /data -type f \\( -iname \"*.pdf\" -o -iname \"*.docx\" -o -iname \"*.doc\" -o -iname \"*.txt\" -o -iname \"*.png\" -o -iname \"*.jpg\" -o -iname \"*.jpeg\" -o -iname \"*.tiff\" \\) -print0 | xargs -0 -n1 sh -c 'size=$(stat -c \"%s\" \"$0\"); hash=$(sha256sum \"$0\" | cut -d\" \" -f1); printf \"%s %s %s\\n\" \"$size\" \"$hash\" \"$0\"'\n\n\n\n\n"
+        "command": "=find /data -type f \\( -iname \"*.pdf\" -o -iname \"*.docx\" -o -iname \"*.doc\" -o -iname \"*.txt\" -o -iname \"*.png\" -o -iname \"*.jpg\" -o -iname \"*.jpeg\" -o -iname \"*.tiff\" \\) -print0 | xargs -0 -n1 sh -c 'size=$(stat -c \"%s\" \"$0\"); hash=$(sha256sum \"$0\"|cut -d\" \" -f1); printf \"%s %s %s\\n\" \"$size\" \"$hash\" \"$0\"'\n\n\n\n"
       },
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [
-        -2048,
-        -184
+        -2000,
+        240
       ],
-      "id": "89bfbe7a-fe70-4658-b045-c08cb435b505",
+      "id": "49b2313c-bd4f-4f3c-800e-ee8eee9822be",
       "name": "Execute Command"
     },
     {
@@ -136,10 +103,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1600,
-        -184
+        -1552,
+        240
       ],
-      "id": "9c335553-0836-4025-801b-d2c52b541a18",
+      "id": "98311272-e883-4caa-af27-66132964fa68",
       "name": "Set Upload Flag"
     },
     {
@@ -169,27 +136,27 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        -1376,
-        -256
+        -1328,
+        240
       ],
-      "id": "ef4081d3-370c-423d-9c0a-a82eb0d51438",
+      "id": "b9fd6e70-b19e-4ba6-837a-2932b37d6dde",
       "name": "Is Small File?"
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- Comprehensive Duplicate Detection\nWITH file_analysis AS (\n  SELECT\n    $1::text    AS check_filename,\n    $2::text    AS check_hash,\n    COALESCE($3::bigint, 0) AS check_size\n),\ndocument_check AS (\n  SELECT \n    d.id                        AS existing_doc_id,\n    d.original_name             AS original_name,\n    d.status                    AS doc_status,\n    COUNT(*)                    AS doc_count\n  FROM documents d\n  JOIN file_analysis fa ON TRUE\n  WHERE d.metadata->>'file_hash' = fa.check_hash\n     OR d.original_name          = fa.check_filename\n  GROUP BY d.id, d.original_name, d.status\n),\nchunk_analysis AS (\n  SELECT \n    COUNT(c.id)                                AS total_chunks,\n    COUNT(*) FILTER (WHERE c.status = 'processed') AS processed_chunks,\n    MAX(c.created_at)                          AS last_chunk_created\n  FROM document_check dc\n  JOIN chunks c ON c.document_id = dc.existing_doc_id\n),\nenhancement_analysis AS (\n  SELECT \n    COUNT(ec.id)                   AS enhanced_chunks,\n    AVG(ec.quality_score)          AS avg_quality,\n    MAX(ec.created_at)             AS last_enhanced\n  FROM document_check dc\n  JOIN enhanced_chunks ec ON ec.document_id = dc.existing_doc_id\n)\nSELECT\n  fa.check_filename        AS fileName,\n  fa.check_hash            AS fileHash,\n  fa.check_size            AS fileSize,\n  COALESCE(dc.doc_count, 0)           AS document_count,\n  dc.existing_doc_id,\n  dc.doc_status,\n  COALESCE(ca.total_chunks, 0)        AS chunk_count,\n  COALESCE(ca.processed_chunks, 0)    AS processed_chunk_count,\n  COALESCE(ea.enhanced_chunks, 0)     AS enhanced_chunk_count,\n  CASE \n    WHEN COALESCE(dc.doc_count,0) = 0                                   THEN 'new_file'\n    WHEN COALESCE(dc.doc_count,0) > 0 AND COALESCE(ca.total_chunks,0) = 0 THEN 'document_exists_no_chunks'\n    WHEN COALESCE(ca.total_chunks,0) > 0 AND COALESCE(ea.enhanced_chunks,0) = 0 THEN 'chunks_exist_not_enhanced'\n    WHEN COALESCE(ea.enhanced_chunks,0) >= COALESCE(ca.total_chunks,0)   THEN 'fully_processed'\n    ELSE 'partially_processed'\n  END                                   AS processing_status,\n  ca.last_chunk_created,\n  ea.last_enhanced,\n  ea.avg_quality\nFROM file_analysis fa\nLEFT JOIN document_check       dc ON TRUE\nLEFT JOIN chunk_analysis       ca ON TRUE\nLEFT JOIN enhancement_analysis ea ON TRUE;\n\n",
+        "query": "-- 1) Reset stuck tasks nach 10 Minuten\nWITH reset_tasks AS (\n  UPDATE processing_queue\n    SET status     = 'pending',\n        started_at = NULL\n  WHERE status = 'processing'\n    AND started_at < NOW() - INTERVAL '10 minutes'\n),\n\n-- 2) Dateianalyse für Verdopplungs-Check\nfile_analysis AS (\n  SELECT\n    '{{ $json.fileName }}'                AS check_filename,\n    '{{ $json.fileHash }}'                AS check_hash,\n    COALESCE({{ $json.fileSize || 0 }},0) AS check_size\n),\n\n-- 3) Existierende Dokumente finden\ndocument_check AS (\n  SELECT \n    d.id                    AS existing_doc_id,\n    d.original_name         AS original_name,\n    d.status                AS doc_status,\n    COUNT(*)                AS doc_count\n  FROM documents d\n  JOIN file_analysis fa ON TRUE\n  WHERE d.metadata->>'file_hash' = fa.check_hash\n     OR d.original_name          = fa.check_filename\n  GROUP BY d.id, d.original_name, d.status\n),\n\n-- 4) Chunk-Analyse\nchunk_analysis AS (\n  SELECT \n    COUNT(c.id)                                  AS total_chunks,\n    COUNT(*) FILTER (WHERE c.status = 'processed') AS processed_chunks,\n    MAX(c.created_at)                            AS last_chunk_created\n  FROM document_check dc\n  JOIN chunks c ON c.document_id = dc.existing_doc_id\n),\n\n-- 5) Enhancement-Analyse\nenhancement_analysis AS (\n  SELECT \n    COUNT(ec.id)              AS enhanced_chunks,\n    AVG(ec.quality_score)     AS avg_quality,\n    MAX(ec.created_at)        AS last_enhanced\n  FROM document_check dc\n  JOIN enhanced_chunks ec ON ec.document_id = dc.existing_doc_id\n)\n\n-- Endgültige Auswahl mit Status‑Berechnung\nSELECT\n  fa.check_filename                AS \"fileName\",\n  fa.check_hash                    AS \"fileHash\",\n  fa.check_size                    AS \"fileSize\",\n  COALESCE(dc.doc_count,  0)       AS document_count,\n  dc.existing_doc_id,\n  dc.doc_status,\n  COALESCE(ca.total_chunks, 0)     AS chunk_count,\n  COALESCE(ca.processed_chunks,0)  AS processed_chunk_count,\n  COALESCE(ea.enhanced_chunks,0)   AS enhanced_chunk_count,\n  CASE \n    WHEN COALESCE(dc.doc_count,0) = 0                                    THEN 'new_file'\n    WHEN COALESCE(dc.doc_count,0) > 0 AND COALESCE(ca.total_chunks,0)=0  THEN 'document_exists_no_chunks'\n    WHEN COALESCE(ca.total_chunks,0)>0 AND COALESCE(ea.enhanced_chunks,0)=0 THEN 'chunks_exist_not_enhanced'\n    WHEN COALESCE(ea.enhanced_chunks,0)>=COALESCE(ca.total_chunks,0)      THEN 'fully_processed'\n    ELSE 'partially_processed'\n  END AS processing_status,\n  ca.last_chunk_created,\n  ea.last_enhanced,\n  ea.avg_quality\nFROM file_analysis fa\nLEFT JOIN document_check        dc ON TRUE\nLEFT JOIN chunk_analysis        ca ON TRUE\nLEFT JOIN enhancement_analysis  ea ON TRUE;\n",
         "options": {
-          "queryReplacement": "=[\"{{$json.fileName}}\", \"{{$json.fileHash}}\", \"{{ $json.fileSize || 0 }}\""
+          "queryReplacement": "=\n"
         }
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -928,
-        -256
+        -880,
+        240
       ],
-      "id": "a32a9587-7dac-42c2-bd8c-1450b22a497e",
+      "id": "a0df07ed-806e-4bbd-9543-e905d8cb1a48",
       "name": "Check of Exist",
       "credentials": {
         "postgres": {
@@ -202,36 +169,27 @@
       "parameters": {
         "jsCode": "// Hol dir das komplette stdout nur einmal\nconst data = $input.first().json;\nconst output = (data.stdout || '').trim();\n\n// Extrahiere alle Original‑Felder außer stdout/stderr/exitCode\nconst { stdout, stderr, exitCode, ...orig } = data;\n\n// Wenn kein stdout, gib einfach die Original‑Objekte zurück (ohne stdout)\nif (!output) {\n  return [{ json: orig }];\n}\n\nconst lines = output.split('\\n');\nconst MAX_SIZE = 10 * 1024 * 1024; // 10 MB\n\nreturn lines.map((line, i) => {\n  const [sizeStr, hash, ...pathParts] = line.split(' ');\n  const fileSize   = Number(sizeStr) || 0;\n  const fileHash   = hash;\n  const filePath   = pathParts.join(' ');\n  const fileName   = filePath.split('/').pop() || 'unknown';\n  const fileType   = fileName.includes('.') \n    ? fileName.split('.').pop().toLowerCase() \n    : '';\n  const shouldUpload = fileSize <= MAX_SIZE;\n  const status       = 'new';\n\n  console.log(\n    `📄 [${i+1}/${lines.length}] ` +\n    `${fileName} – ${fileSize}B – hash=${fileHash.substring(0,8)}… ` +\n    `(upload=${shouldUpload})`\n  );\n\n  return {\n    json: {\n      // nur die Original‑Felder ohne stdout/stderr/exitCode\n      ...orig,\n      // die neuen, geparsten Felder\n      fileSize,\n      fileHash,\n      filePath,\n      fileName,\n      fileType,\n      shouldUpload,\n      status,\n      message: `Datei: ${fileName} | Größe: ${fileSize} Bytes | Status: ${status}`\n    }\n  };\n});\n\n\n\n"
       },
-      "id": "77d311b2-2bb1-4496-931c-36f9fe74460c",
+      "id": "f0494fb0-b2ec-4c1c-be39-fa993ca7f9d3",
       "name": "Parse File List",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -1824,
-        -184
+        -1776,
+        240
       ]
     },
     {
       "parameters": {
-        "mode": "combine",
-        "combineBy": "combineByPosition",
-        "options": {
-          "clashHandling": {
-            "values": {
-              "resolveClash": "preferInput1"
-            }
-          },
-          "includeUnpaired": true
-        }
+        "jsCode": "return $input.all()\n  .filter(item => item.json.processing_status === 'new_file')\n  .map(item => ({ json: item.json }));\n"
       },
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3.2,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        -480,
-        -88
+        -656,
+        240
       ],
-      "id": "5912cbfb-571c-4a75-bbae-a474139fc649",
-      "name": "Merge"
+      "id": "1c98785e-ef41-4235-b20d-264bb358752a",
+      "name": "Code"
     }
   ],
   "pinData": {},
@@ -241,24 +199,6 @@
         [
           {
             "node": "Execute Command",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Is New File?": {
-      "main": [
-        [
-          {
-            "node": "Log Skipped",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Merge",
             "type": "main",
             "index": 0
           }
@@ -316,11 +256,6 @@
             "node": "Is Small File?",
             "type": "main",
             "index": 0
-          },
-          {
-            "node": "Merge",
-            "type": "main",
-            "index": 1
           }
         ]
       ]
@@ -347,7 +282,7 @@
       "main": [
         [
           {
-            "node": "Is New File?",
+            "node": "Code",
             "type": "main",
             "index": 0
           }
@@ -365,7 +300,7 @@
         ]
       ]
     },
-    "Merge": {
+    "Code": {
       "main": [
         [
           {
@@ -381,8 +316,9 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "e036c995-fe1b-47ef-a4e5-d6f641de53ce",
+  "versionId": "bd814159-f644-4483-8e41-4f534621c39c",
   "meta": {
+    "templateCredsSetupCompleted": true,
     "instanceId": "ea5d82e8e516069c37d2848a89101cd5249268f1ee9ad27e6599d64c520de1dd"
   },
   "id": "hL5cnt3pyVTExu9p",
