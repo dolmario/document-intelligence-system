@@ -293,6 +293,12 @@ class PaddleOCREngine(BaseOCREngine):
         if not HAS_PADDLE:
             raise ImportError("PaddleOCR not available")
             
+        # Memory Management Environment Variables
+        os.environ['FLAGS_eager_delete_tensor_gb'] = '0.0'  # Sofortiges Memory Cleanup
+        os.environ['FLAGS_fraction_of_gpu_memory_to_use'] = '0.3'  # Nur 30% GPU Memory
+        os.environ['FLAGS_fast_eager_deletion_mode'] = 'True'
+        os.environ['FLAGS_memory_fraction_of_eager_deletion'] = '1.0'
+        
         # Map language codes
         lang_map = {
             "deu": "german", 
@@ -304,22 +310,33 @@ class PaddleOCREngine(BaseOCREngine):
         
         paddle_lang = lang_map.get(self.config.languages[0], "en")
         
-        # KORRIGIERT: Moderne PaddleOCR Parameter
+        # CPU-Only für Stabilität
         self.ocr = PaddleOCR(
             lang=paddle_lang,
-            use_textline_orientation=True,
-            text_recognition_model_dir=None,
-            text_detection_model_dir=None,
-            device="gpu" if torch.cuda.is_available() else "cpu"
+            use_angle_cls=False,      # Deaktiviere Winkel-Klassifikation
+            use_gpu=False,            # CPU only
+            enable_mkldnn=True,       # CPU Optimierung
+            max_text_length=25,       # Limitiere Textlänge
+            rec_batch_num=1,          # Kleinere Batches
+            det_db_thresh=0.3,
+            det_db_box_thresh=0.5,
+            det_db_unclip_ratio=1.6,
+            det_limit_side_len=960,   # Reduzierte Bildgröße
+            use_mp=False,             # Single Process
+            total_process_num=1,
+            
         )
         
     async def process(self, image_bytes: bytes) -> List[OCRResult]:
-        """Process with PaddleOCR - ULTRA-ROBUSTE VERSION"""
+        """Process with PaddleOCR - Mit Memory Cleanup"""
+        import numpy as np
+        
         try:
             # Convert to numpy array
             image = Image.open(io.BytesIO(image_bytes))
             img_array = np.array(image)
             
+            # Run OCR
             result = self.ocr.predict(img_array)
             
             # ✅ ULTRA-ROBUSTE PRÜFUNG - verhindert ALLE "string index out of range" Fehler
@@ -438,6 +455,16 @@ class PaddleOCREngine(BaseOCREngine):
             logger.error(f"PaddleOCR error: {e}")
             logger.debug(f"Image shape: {img_array.shape if 'img_array' in locals() else 'No array'}")
             return []
+        finally:
+            # WICHTIG: Memory Cleanup nach jeder Verarbeitung
+            if 'img_array' in locals():
+                del img_array
+            if 'image' in locals():
+                del image
+            if 'result' in locals():
+                del result
+            # Force garbage collection
+            gc.collect()
 
 
 class EasyOCREngine(BaseOCREngine):
@@ -517,20 +544,34 @@ class OCREngineManager:
         return self.engines[engine_type]
     
     def _select_best_engine(self) -> OCREngine:
-        """Select best available engine"""
-        try:
-            if HAS_PADDLE:
-                # Test mit einfachem Bild ob PaddleOCR funktioniert
+        """Select best available engine basierend auf Memory"""
+        memory = psutil.virtual_memory()
+        
+        # Bei wenig Speicher: Tesseract bevorzugen
+        if memory.percent > 70:
+            logger.warning(f"⚠️ High memory usage ({memory.percent}%), using Tesseract")
+            return OCREngine.TESSERACT
+        
+        # Teste PaddleOCR mit Memory Check
+        if HAS_PADDLE:
+            try:
+                # Minimaler Test
                 test_ocr = PaddleOCR(
-                    lang='en', 
-                    use_textline_orientation=False,
-                    device="gpu" if torch.cuda.is_available() else "cpu"
+                    lang='en',
+                    use_gpu=False,  # CPU only
+                    enable_mkldnn=False,
+                    
                 )
-            return OCREngine.PADDLEOCR
-        except Exception as e:
-            logger.warning(f"PaddleOCR test failed: {e}")
-    
-    # Fallback zu anderen Engines...
+                # Cleanup Test
+                del test_ocr
+                gc.collect()
+                return OCREngine.PADDLEOCR
+            except Exception as e:
+                logger.warning(f"PaddleOCR test failed: {e}")
+        
+        if HAS_EASYOCR and memory.percent < 60:
+            return OCREngine.EASYOCR
+            
         return OCREngine.TESSERACT
 
 
@@ -851,7 +892,7 @@ class OCRAgentOptimizedV2:
     # === INTELLIGENT PDF EXTRACTION ===
 
     async def extract_pdf_intelligent(self, pdf_bytes: bytes, filename: str, ocr_config: OCRConfig) -> List[Dict]:
-        """Intelligente PDF-Extraktion mit PyMuPDF"""
+        """Intelligente PDF-Extraktion mit PyMuPDF und Memory Management"""
         chunks = []
         extraction_mode = ocr_config.extraction_mode
         
@@ -863,67 +904,88 @@ class OCRAgentOptimizedV2:
             logger.info(f"📄 PDF: {filename} ({total_pages} Seiten)")
             logger.info(f"🔧 Extraction mode: {extraction_mode}")
             
-            for page_num, page in enumerate(pdf_doc, 1):
-                if page_num % 10 == 0:
-                    logger.info(f"📄 Progress: {page_num}/{total_pages}")
+            # Bei großen PDFs: Batch-Processing
+            batch_size = 5  # Verarbeite 5 Seiten gleichzeitig
+            
+            for batch_start in range(0, total_pages, batch_size):
+                batch_end = min(batch_start + batch_size, total_pages)
                 
-                # Determine extraction strategy
-                if extraction_mode == ExtractionMode.AUTO:
-                    # Check if page has text
-                    text = page.get_text().strip()
-                    if text:
-                        extraction_mode = ExtractionMode.HYBRID
-                    else:
-                        extraction_mode = ExtractionMode.OCR
-                
-                if extraction_mode in [ExtractionMode.NATIVE, ExtractionMode.HYBRID]:
-                    # Extract native text
-                    text = page.get_text()
-                    if text.strip():
-                        # Extract with layout preservation
-                        text_dict = page.get_text("dict")
-                        page_chunks = self._process_pdf_text_dict(text_dict, page_num, "pymupdf_native")
-                        chunks.extend(page_chunks)
-                        
-                        if extraction_mode == ExtractionMode.NATIVE:
-                            continue
-                
-                if extraction_mode in [ExtractionMode.OCR, ExtractionMode.HYBRID]:
-                    # OCR processing
-                    # Check for images in page
-                    image_list = page.get_images()
+                for page_num in range(batch_start, batch_end):
+                    page = pdf_doc[page_num]
                     
-                    if image_list or extraction_mode == ExtractionMode.OCR:
-                        # Render page as image
-                        mat = fitz.Matrix(ocr_config.dpi/72.0, ocr_config.dpi/72.0)
-                        pix = page.get_pixmap(matrix=mat)
-                        img_data = pix.tobytes("png")
-                        
-                        # Run OCR
-                        ocr_results = await self._run_ocr(img_data, ocr_config)
-                        
-                        for ocr_result in ocr_results:
-                            chunk = {
-                                "content": ocr_result.text,
-                                "type": "text",
-                                "page": page_num,
-                                "metadata": {
-                                    "extraction_method": f"ocr_{ocr_config.engine}",
-                                    "page_total": total_pages
-                                }
-                            }
+                    if page_num % 10 == 0:
+                        logger.info(f"📄 Progress: {page_num + 1}/{total_pages}")
+                        # Memory Status
+                        memory = psutil.virtual_memory()
+                        logger.info(f"💾 Memory: {memory.percent:.1f}% used")
+                    
+                    # Determine extraction strategy
+                    if extraction_mode == ExtractionMode.AUTO:
+                        # Check if page has text
+                        text = page.get_text().strip()
+                        if text:
+                            extraction_mode = ExtractionMode.HYBRID
+                        else:
+                            extraction_mode = ExtractionMode.OCR
+                    
+                    if extraction_mode in [ExtractionMode.NATIVE, ExtractionMode.HYBRID]:
+                        # Extract native text
+                        text = page.get_text()
+                        if text.strip():
+                            # Extract with layout preservation
+                            text_dict = page.get_text("dict")
+                            page_chunks = self._process_pdf_text_dict(text_dict, page_num + 1, "pymupdf_native")
+                            chunks.extend(page_chunks)
                             
-                            if ocr_result.confidence is not None:
-                                chunk["metadata"]["confidence"] = ocr_result.confidence
-                            if ocr_result.bbox is not None:
-                                chunk["metadata"]["bbox"] = ocr_result.bbox
-                                
-                            chunks.append(chunk)
+                            if extraction_mode == ExtractionMode.NATIVE:
+                                continue
+                    
+                    if extraction_mode in [ExtractionMode.OCR, ExtractionMode.HYBRID]:
+                        # OCR processing
+                        # Check for images in page
+                        image_list = page.get_images()
                         
-                        del pix
+                        if image_list or extraction_mode == ExtractionMode.OCR:
+                            # Render page as image
+                            mat = fitz.Matrix(ocr_config.dpi/72.0, ocr_config.dpi/72.0)
+                            pix = page.get_pixmap(matrix=mat)
+                            img_data = pix.tobytes("png")
+                            
+                            # Run OCR
+                            ocr_results = await self._run_ocr(img_data, ocr_config)
+                            
+                            for ocr_result in ocr_results:
+                                chunk = {
+                                    "content": ocr_result.text,
+                                    "type": "text",
+                                    "page": page_num + 1,
+                                    "metadata": {
+                                        "extraction_method": f"ocr_{ocr_config.engine}",
+                                        "page_total": total_pages
+                                    }
+                                }
+                                
+                                if ocr_result.confidence is not None:
+                                    chunk["metadata"]["confidence"] = ocr_result.confidence
+                                if ocr_result.bbox is not None:
+                                    chunk["metadata"]["bbox"] = ocr_result.bbox
+                                    
+                                chunks.append(chunk)
+                            
+                            # WICHTIG: Cleanup nach jeder Seite
+                            del pix
+                            del img_data
+                            if 'ocr_results' in locals():
+                                del ocr_results
                 
-                # Memory cleanup
-                if page_num % 5 == 0:
+                # Batch Memory Cleanup
+                gc.collect()
+                
+                # Optional: Pause bei hoher Memory-Nutzung
+                memory = psutil.virtual_memory()
+                if memory.percent > 85:
+                    logger.warning(f"⚠️ High memory usage: {memory.percent}%, waiting...")
+                    await asyncio.sleep(2)
                     gc.collect()
             
             pdf_doc.close()
@@ -931,6 +993,11 @@ class OCRAgentOptimizedV2:
         except Exception as e:
             logger.error(f"❌ PDF-Extraktion fehlgeschlagen: {e}")
             return [self._create_error_chunk(f"PDF-Fehler: {e}")]
+        finally:
+            # Final cleanup
+            if 'pdf_doc' in locals():
+                pdf_doc.close()
+            gc.collect()
             
         return chunks or [self._create_error_chunk("Kein Text aus PDF extrahiert")]
 
