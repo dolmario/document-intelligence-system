@@ -107,6 +107,9 @@ services:
       DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
       SEARCH_MODEL: ${SEARCH_MODEL:-gemma2:2b}  # Neues Search-Modell
       PYTHONUNBUFFERED: 1
+      USE_N8N_ENHANCEMENT: "true"
+      N8N_WEBHOOK_BASE: "http://n8n:5678"
+      ENABLE_DOWNLOAD_ENDPOINT: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,6 +150,8 @@ services:
       OLLAMA_URL: http://semantic-doc-finder-ollama:11434
       DEFAULT_MODEL: ${DEFAULT_MODEL:-mistral}
       SEARCH_MODEL: ${SEARCH_MODEL:-gemma2:2b}  # Für N8N Search Enhancement
+      SEARCH_API_URL: "http://search_api:8001"
+      ENABLE_SEARCH_ENHANCEMENT: "true"
     volumes:
       - ${N8N_DATA_PATH:-./n8n_data}:/home/node/.n8n
       - ./n8n/workflows:/workflows
@@ -177,8 +182,8 @@ services:
       OLLAMA_BASE_URL: http://semantic-doc-finder-ollama:11434
       
       # Search API Integration (OpenAI-kompatibel)
-      OPENAI_API_BASE_URL: http://semantic-doc-finder-search-api:8001/v1
       OPENAI_API_KEY: "dummy-key-not-needed"
+      OPENAI_API_BASE_URL: "http://search_api:8001/v1"  # NUR EINMAL DEFINIERT!
       
       # WebUI Settings (aus .env)
       WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-change-this-secret-key-in-production}
@@ -203,6 +208,10 @@ services:
       
       # Custom Models Integration
       ENABLE_MODEL_FILTER: false
+      # Enable feedback buttons
+      ENABLE_MESSAGE_RATING: "true"
+      # Webhook for feedback
+      FEEDBACK_WEBHOOK_URL: "http://search_api:8001/feedback"
     volumes:
       - ${WEBUI_DATA_PATH:-./open_webui_data}:/app/backend/data
       - ${DOCUMENTS_PATH:-./data}:/app/uploads:ro
